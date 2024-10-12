@@ -63,13 +63,9 @@ Links: {len(self.links)}
     def _process_files(self, zip: ZipFile) -> None:
         index = 0
         
-        self.progress_bar.update(self.task_id, total_files=len(zip.filelist))
-        
         for file in zip.filelist:
             filename = file.filename.lower()
             index += 1
-            
-            self.progress_bar.update(self.task_id, advance=1)
             
             if 'net/minecraft' in filename and not self.options.get('minecraft'):
                 self.options['minecraft'] = True

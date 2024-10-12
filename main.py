@@ -17,8 +17,8 @@ class CLI:
         print(self.menu_text)
         file_path = self.prompt_file_selection()
         
-        with Progress(SpinnerColumn(), TextColumn("[blue][progress.description]{task.description} {task.fields[index]}/{task.fields[total_files]}[/]"), BarColumn(pulse_style='gray'), TextColumn("[progress.description]"), transient=True) as progress:
-            task_id = progress.add_task(f"Scanned", index=0, total_files=0, total=None)
+        with Progress(SpinnerColumn(), TextColumn("[blue][progress.description]{task.description}[/]"), BarColumn(pulse_style='gray'), TextColumn("[progress.description]"), transient=True) as progress:
+            task_id = progress.add_task(f"Scanning", total=None)
             
             scanner = Scanner(file_path, progress, task_id)
             report = scanner.scan()

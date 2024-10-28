@@ -2,7 +2,7 @@
 
 <h1 align=center>CollapseScanner</h1>
 
-<h2 align=center>Minecraft clients scanning tool for various threats</h2>
+<h2 align=center>Multithreading jar scanning tool for links and ips</h2>
 
 ## Showcase
-<img src="https://github.com/user-attachments/assets/d17c429e-0a6b-4295-be4e-e7fac25713af" width=500>
+<img src="https://github.com/user-attachments/assets/28f65a1b-7206-4e83-8548-d8c961b0531e" width=500>

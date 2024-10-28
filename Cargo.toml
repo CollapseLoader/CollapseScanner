@@ -1,0 +1,10 @@
+[package]
+name = "collapsescanner"
+version = "0.1.0"
+edition = "2021"
+authors = ["dest4590", "github copilot"]
+
+[dependencies]
+colored = "2.1.0"
+regex = "1.11.1"
+zip = "2.2.0"

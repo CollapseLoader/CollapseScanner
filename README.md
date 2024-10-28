@@ -6,3 +6,18 @@
 
 ## Showcase
 <img src="https://github.com/user-attachments/assets/28f65a1b-7206-4e83-8548-d8c961b0531e" width=500>
+
+### Build Instructions:
+
+1. Clone the repository:
+
+```sh
+git clone https://github.com/CollapseLoader/CollapseScanner.git
+cd CollapseScanner
+```
+
+2. Build the project:
+
+```sh
+cargo build --release
+```

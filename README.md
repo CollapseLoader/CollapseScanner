@@ -5,7 +5,7 @@
 <h2 align=center>Multithreading jar scanning tool for links and ips</h2>
 
 ## Showcase
-<img src="https://github.com/user-attachments/assets/28f65a1b-7206-4e83-8548-d8c961b0531e" width=500>
+<img src="https://github.com/user-attachments/assets/a4b97dd9-d233-46c7-a5dd-c0d11d0d0148" width=500>
 
 ### Build Instructions:
 

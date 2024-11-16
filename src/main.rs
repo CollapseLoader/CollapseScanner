@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use eframe::egui::{self, CentralPanel, Context, ScrollArea, TextEdit, TopBottomPanel};
 use eframe::CreationContext;
 use egui::Slider;
@@ -234,11 +236,30 @@ impl Scanner {
     }
 }
 
+pub(crate) fn load_icon() -> egui::IconData {
+    let (icon_rgba, icon_width, icon_height) = {
+        let icon = include_bytes!("../resources/icon.ico");
+        let image = image::load_from_memory(icon)
+            .expect("Failed to open icon path")
+            .into_rgba8();
+        let (width, height) = image.dimensions();
+        let rgba = image.into_raw();
+        (rgba, width, height)
+    };
+
+    egui::IconData {
+        rgba: icon_rgba,
+        width: icon_width,
+        height: icon_height,
+    }
+}
+
 fn main() {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_min_inner_size(egui::vec2(800.0, 400.0))
-            .with_inner_size(egui::vec2(800.0, 400.0)),
+            .with_inner_size(egui::vec2(800.0, 400.0))
+            .with_icon(std::sync::Arc::new(load_icon())),
         ..Default::default()
     };
     eframe::run_native(

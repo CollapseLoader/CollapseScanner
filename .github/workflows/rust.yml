@@ -35,6 +35,10 @@ jobs:
           $ARTIFACT_HASH=git rev-parse --short HEAD
           echo "ARTIFACT_HASH=$ARTIFACT_HASH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Rename Executable
+        id: rename
+        run: copy target/release/collapsescanner.exe ./collapsescanner-${{ env.ARTIFACT_HASH }}.exe
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:

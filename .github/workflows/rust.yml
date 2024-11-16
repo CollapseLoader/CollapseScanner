@@ -1,37 +1,55 @@
 name: Rust
 
 on:
-    push:
-        branches:
-            - main
-        paths:
-            - 'src/**'
-            - '**.toml'
-            - '**.yml'
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
-    workflow_dispatch:
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: release ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [x86_64-pc-windows-gnu]
+  build-overlay:
+    name: collapsescanner
+    runs-on: windows-latest
+
     steps:
-      - uses: actions/checkout@main
-      - name: Compile
-        id: compile
-        uses: rust-build/rust-build.action@v1.4.5
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
         with:
-          RUSTTARGET: x86_64-pc-windows-gnu
-          UPLOAD_MODE: none
-  
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
+          toolchain: nightly
+          override: true
+      
+      - uses: actions/checkout@v3
         with:
-          name: Binary
-          path: |
-            ${{ steps.compile.outputs.BUILT_ARCHIVE }}
-            ${{ steps.compile.outputs.BUILT_CHECKSUM }}
+          submodules: recursive
+          
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build
+        run: |
+          cargo build --verbose --release
+          $ARTIFACT_HASH=git rev-parse --short HEAD
+          echo "ARTIFACT_HASH=$ARTIFACT_HASH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build_${{ env.ARTIFACT_HASH }}
+          path: collapsescanner-${{ env.ARTIFACT_HASH }}.exe
+
+      - name: Release
+        id: release
+        uses: ncipollo/release-action@v1
+        with:
+          body: |
+            Automatic pre-release created by GitHub Actions
+            Builded from commit ${{ env.ARTIFACT_HASH }}
+            VirusTotal Scan: ${{ env.VIRUSTOTAL_URL }}
+          name: "Nightly Build ${{ env.ARTIFACT_HASH }}"
+          tag: "prerelease-${{ env.ARTIFACT_HASH }}"
+          prerelease: true
+          artifacts: collapsescanner-${{ env.ARTIFACT_HASH }}.exe

@@ -1,0 +1,113 @@
+name: Rust
+
+on:
+    push:
+        branches: ['main']
+    pull_request:
+        branches: ['main']
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    build-windows:
+        name: Build (Windows)
+        runs-on: windows-latest
+
+        steps:
+            - name: Install toolchain
+              uses: actions-rs/toolchain@v1
+              with:
+                  toolchain: nightly
+                  override: true
+
+            - uses: actions/checkout@v3
+              with:
+                  submodules: recursive
+
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
+
+            - name: Build
+              run: |
+                  cargo build --verbose --release
+                  $ARTIFACT_HASH=git rev-parse --short HEAD
+                  echo "ARTIFACT_HASH=$ARTIFACT_HASH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              id: build-step-windows
+
+            - name: Rename Executable
+              id: rename-windows
+              run: copy target/release/collapsescanner.exe ./CollapseScanner-windows-${{ env.ARTIFACT_HASH }}.exe
+
+            - name: Upload Artifact (Windows)
+              uses: actions/upload-artifact@v4
+              with:
+                  name: CollapseScanner-windows-${{ env.ARTIFACT_HASH }}
+                  path: CollapseScanner-windows-${{ env.ARTIFACT_HASH }}.exe
+
+    build-linux:
+        name: Build (Linux)
+        runs-on: ubuntu-latest
+        outputs:
+            artifact_hash: ${{ steps.build-step-linux.outputs.artifact_hash }}
+
+        steps:
+            - name: Install toolchain
+              uses: actions-rs/toolchain@v1
+              with:
+                  toolchain: nightly
+                  override: true
+
+            - uses: actions/checkout@v3
+              with:
+                  submodules: recursive
+
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
+
+            - name: Build
+              run: |
+                  cargo build --verbose --release
+                  ARTIFACT_HASH=$(git rev-parse --short HEAD)
+                  echo "ARTIFACT_HASH=$ARTIFACT_HASH" >> $GITHUB_ENV
+                  echo "artifact_hash=$ARTIFACT_HASH" >> $GITHUB_OUTPUT
+
+              id: build-step-linux
+
+            - name: Rename Executable
+              id: rename-linux
+              run: mv target/release/collapsescanner ./CollapseScanner-linux-${{ env.ARTIFACT_HASH }}
+
+            - name: Upload Artifact (Linux)
+              uses: actions/upload-artifact@v4
+              with:
+                  name: CollapseScanner-linux-${{ env.ARTIFACT_HASH }}
+                  path: CollapseScanner-linux-${{ env.ARTIFACT_HASH }}
+
+    create-release:
+        name: Create Release
+        needs: [build-windows, build-linux]
+        runs-on: ubuntu-latest
+        if: github.ref == 'refs/heads/main'
+        permissions:
+            contents: write
+
+        steps:
+            - name: Download Artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  pattern: CollapseScanner-*
+
+            - name: Release
+              id: create_release
+              uses: ncipollo/release-action@v1
+              with:
+                  body: |
+                      Automatic pre-release created by GitHub Actions
+                      Builded from commit ${{ needs.build-linux.outputs.ARTIFACT_HASH }}
+                  name: "Nightly Build ${{ needs.build-linux.outputs.ARTIFACT_HASH }}"
+                  tag: "prerelease-${{ needs.build-linux.outputs.ARTIFACT_HASH }}"
+                  prerelease: true
+                  artifacts: CollapseScanner-windows-${{ needs.build-linux.outputs.ARTIFACT_HASH }}/CollapseScanner-windows-${{ needs.build-linux.outputs.ARTIFACT_HASH }}.exe, CollapseScanner-linux-${{ needs.build-linux.outputs.ARTIFACT_HASH }}/CollapseScanner-linux-${{ needs.build-linux.outputs.artifact_hash }}

@@ -1,240 +1,194 @@
+mod database;
+
 use colored::*;
+use database::GOOD_LINKS;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use lazy_static::lazy_static;
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
-use std::io;
-use std::io::Read;
-use std::io::Write;
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::io::{self, Read, Write};
+use url::Url;
 use zip::ZipArchive;
 
-pub mod database;
-
-struct Scanner {
-    file: String,
-    options: Arc<Mutex<HashMap<String, bool>>>,
-    links: Arc<Mutex<Vec<(String, String)>>>,
-    good_links: Vec<String>,
+#[derive(Debug, Clone)]
+struct ScanResult {
+    file_path: String,
+    matches: Vec<(String, String)>,
 }
 
-impl Scanner {
-    fn new(file: &str, good_links: Vec<String>) -> Self {
-        Scanner {
-            file: file.to_string(),
-            options: Arc::new(Mutex::new(HashMap::new())),
-            links: Arc::new(Mutex::new(Vec::new())),
+struct CollapseScanner {
+    good_links: HashSet<String>,
+    ip_regex: Regex,
+    url_regex: Regex,
+}
+
+impl CollapseScanner {
+    fn new() -> Result<CollapseScanner, io::Error> {
+        let good_links: HashSet<_> = GOOD_LINKS.iter().cloned().collect();
+
+        lazy_static! {
+            static ref IP_REGEX_STATIC: Regex = Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").unwrap();
+            static ref URL_REGEX_STATIC: Regex =
+                Regex::new(r"\b(?:https?|ftp|ssh|telnet|file)://[^\s/$.?#].[^\s]*\b").unwrap();
+        }
+
+        Ok(CollapseScanner {
             good_links,
-        }
+            ip_regex: IP_REGEX_STATIC.clone(),
+            url_regex: URL_REGEX_STATIC.clone(),
+        })
     }
 
-    fn report(&self) -> String {
-        let options = self.options.lock().unwrap();
-        let options_view = options
-            .iter()
-            .map(|(key, value)| {
-                format!(
-                    "{}: {}",
-                    key.replace('_', " ").to_uppercase().bold(),
-                    if *value { "Yes".green() } else { "No".red() }
+    fn scan_jar(
+        &self,
+        jar_path: &str,
+        multi_progress: &MultiProgress,
+    ) -> Result<Vec<ScanResult>, io::Error> {
+        let file = File::open(jar_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                eprintln!("Error: The file '{}' was not found.", jar_path);
+            }
+            e
+        })?;
+
+        let mut archive = ZipArchive::new(file)?;
+
+        let pb = multi_progress.add(ProgressBar::new(archive.len() as u64));
+
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
                 )
-            })
-            .collect::<Vec<String>>()
-            .join("\n");
+                .expect("Failed to create progress bar template")
+                .progress_chars("#>-"),
+        );
 
-        let links = self.links.lock().unwrap();
-        let links_count = links.len();
-        let links_list = links
-            .iter()
-            .map(|(filename, link)| format!("{} | {}", link.blue(), filename.yellow()))
-            .collect::<Vec<String>>()
-            .join("\n");
+        let mut results = Vec::new();
 
-        format!(
-            "{}: {}\n{}\n\n{}:\n{}",
-            "Links Found".bold().green(),
-            links_count.to_string().bold(),
-            options_view,
-            "Detailed Links".bold().green(),
-            links_list
-        )
-    }
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let outpath = match file.enclosed_name() {
+                Some(path) => path.to_owned(),
+                None => continue,
+            };
 
-    fn scan(&mut self, num_threads: usize) -> String {
-        println!("{}", format!("Scanning: {}...", self.file).bold().cyan());
-
-        if !self.file.ends_with(".jar") {
-            println!("{}", "File is not a jar executable!".red());
-            return String::new();
-        }
-
-        let file = File::open(&self.file).unwrap();
-        let mut zip = ZipArchive::new(file).unwrap();
-
-        self.process_manifest(&mut zip);
-        self.process_files(&mut zip, num_threads);
-
-        self.report()
-    }
-
-    fn process_manifest(&mut self, zip: &mut ZipArchive<File>) {
-        match zip.by_name("META-INF/MANIFEST.MF") {
-            Ok(mut file) => {
-                let mut manifest = String::new();
-                file.read_to_string(&mut manifest).unwrap();
-                if let Some(start) = manifest.find("Main-Class") {
-                    let end = manifest[start..].find('\n').unwrap_or(manifest.len());
-                    let main_class_info = &manifest[start..start + end];
-                    println!("{}", format!("{}", main_class_info).green());
-                }
-            }
-            Err(e) => println!("{}", format!("Error processing manifest: {}", e).red()),
-        }
-    }
-
-    fn process_files(&mut self, zip: &mut ZipArchive<File>, num_threads: usize) {
-        let options = Arc::clone(&self.options);
-        let links = Arc::clone(&self.links);
-
-        let mut file_datas = Vec::new();
-
-        for i in 0..zip.len() {
-            let mut file = zip.by_index(i).unwrap();
-            let filename = file.name().to_string();
-            let lower_filename = filename.to_lowercase();
-
-            if lower_filename.contains("net/minecraft") {
-                let mut options = options.lock().unwrap();
-                options.insert("minecraft".to_string(), true);
-            }
-            if lower_filename.contains("fabric.mod.json") {
-                let mut options = options.lock().unwrap();
-                options.insert("fabric".to_string(), true);
-            }
-            if lower_filename.contains("mods.toml") {
-                let mut options = options.lock().unwrap();
-                options.insert("forge".to_string(), true);
-            }
-            if lower_filename.contains("rpc") {
-                let mut options = options.lock().unwrap();
-                options.insert("discord_RPC".to_string(), true);
-            }
-
-            if lower_filename.ends_with(".class") {
-                let mut data = Vec::new();
-                if let Err(e) = file.read_to_end(&mut data) {
-                    println!(
-                        "{}",
-                        format!("Error reading class file {}: {}", filename, e).red()
-                    );
-                } else {
-                    file_datas.push((filename, data));
-                }
-            }
-        }
-
-        let total_files = file_datas.len() as u64;
-
-        let good_links = self.good_links.clone();
-
-        let mut handles = Vec::new();
-
-        let chunk_size = (total_files as usize + num_threads - 1) / num_threads;
-
-        for chunk in file_datas.chunks(chunk_size) {
-            let chunk = chunk.to_owned();
-            let links = Arc::clone(&links);
-            let good_links = good_links.clone();
-
-            let handle = thread::spawn(move || {
-                for (filename, data) in chunk {
-                    let data_str = String::from_utf8_lossy(&data);
-                    let url_regex =
-                        Regex::new(r"\b(?:https?|ftp|ssh|telnet|file)://[^\s/$.?#].[^\s]*\b")
-                            .unwrap();
-                    let ip_regex = Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").unwrap();
-
-                    for url_match in url_regex.find_iter(&data_str) {
-                        let link: String = url_match
-                            .as_str()
-                            .chars()
-                            .filter(|c| c.is_ascii_graphic())
-                            .collect();
-                        if !good_links.iter().any(|g| link.contains(g)) {
-                            let mut links = links.lock().unwrap();
-                            links.push((filename.clone(), link.clone()));
-                            println!(
-                                "{}",
-                                format!("Found link: {} | {}", link.cyan(), filename.yellow())
-                                    .green()
+            if file.name().ends_with(".class") {
+                let mut buffer = Vec::new();
+                file.read_to_end(&mut buffer)?;
+                if let Some(scan_result) =
+                    self.scan_class_file_content(&buffer, &outpath.to_string_lossy())
+                {
+                    if scan_result.matches.len() == 1 {
+                        let (match_type, matched_string) = &scan_result.matches[0];
+                        let msg = format!(
+                            "File: {} - Type: {}, Value: {}",
+                            scan_result.file_path.cyan(),
+                            match_type.green(),
+                            matched_string.red()
+                        );
+                        pb.println(msg);
+                    } else {
+                        let msg = format!("File: {}", scan_result.file_path.cyan());
+                        pb.println(msg);
+                        for (match_type, matched_string) in &scan_result.matches {
+                            let msg2 = format!(
+                                "  Type: {}, Value: {}",
+                                match_type.green(),
+                                matched_string.red()
                             );
+                            pb.println(msg2);
                         }
                     }
 
-                    for ip_match in ip_regex.find_iter(&data_str) {
-                        let ip_address = ip_match.as_str().to_string();
-                        let mut links = links.lock().unwrap();
-                        links.push((filename.clone(), ip_address.clone()));
-                        println!(
-                            "{}",
-                            format!(
-                                "Found IP address: {} | {}",
-                                ip_address.cyan(),
-                                filename.yellow()
-                            )
-                            .green()
-                        );
-                    }
+                    results.push(scan_result);
                 }
-            });
-            handles.push(handle);
+            }
+            pb.inc(1);
         }
 
-        for handle in handles {
-            handle.join().unwrap();
+        pb.finish_with_message("Scan complete");
+        Ok(results)
+    }
+
+    fn scan_class_file_content(&self, buffer: &[u8], file_path: &str) -> Option<ScanResult> {
+        let mut matches = Vec::new();
+        let content = String::from_utf8_lossy(buffer);
+
+        for cap in self.ip_regex.captures_iter(&content) {
+            let ip = cap.get(0).unwrap().as_str();
+            if !self.good_links.contains(ip) {
+                matches.push(("IP".to_string(), ip.to_string()));
+            }
+        }
+
+        for cap in self.url_regex.captures_iter(&content) {
+            let url_str = cap.get(0).unwrap().as_str();
+            if let Ok(url) = Url::parse(url_str) {
+                if let Some(host) = url.host_str() {
+                    if !self.good_links.contains(host) {
+                        matches.push(("URL".to_string(), url_str.to_string()));
+                    }
+                } else {
+                    matches.push(("URL".to_string(), url_str.to_string()));
+                }
+            } else {
+                matches.push(("Invalid URL".to_string(), url_str.to_string()));
+            }
+        }
+
+        if !matches.is_empty() {
+            Some(ScanResult {
+                file_path: file_path.to_string(),
+                matches,
+            })
+        } else {
+            None
         }
     }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let mut log_to_file = false;
-
-    if args.contains(&"--log".to_string()) {
-        log_to_file = true;
-    }
-
+fn main() -> Result<(), io::Error> {
     println!(
-        "\n{} - Multithreading jar scanning tool for links and ips\n{} scanner may not be accurate!\n",
+        "\n{} - Jar scanning tool for links and ips\n{} scanner may not be accurate!\n",
         "CollapseScanner".bold().bright_blue(),
         "warning:".yellow()
     );
 
-    print!("{}", "Enter the path to the jar file: ".bold());
-    io::stdout().flush().expect("Failed to flush stdout");
-    let mut file_path = String::new();
-    io::stdin()
-        .read_line(&mut file_path)
-        .expect("Failed to read line");
-    let file_path = file_path.trim();
+    print!("Enter the path to the JAR file: ");
+    io::stdout().flush()?;
 
-    print!("{}", "Enter the number of threads to use (4): ".bold());
-    io::stdout().flush().expect("Failed to flush stdout");
-    let mut threads_input = String::new();
-    io::stdin()
-        .read_line(&mut threads_input)
-        .expect("Failed to read line");
-    let num_threads: usize = threads_input.trim().parse().unwrap_or(4);
+    let mut jar_path = String::new();
+    io::stdin().read_line(&mut jar_path)?;
+    let jar_path = jar_path.trim();
 
-    let mut scanner = Scanner::new(file_path, database::GOOD_LINKS.to_vec());
-    let report = scanner.scan(num_threads);
-    println!("{}", report);
+    let scanner = CollapseScanner::new()?;
+    let multi_progress = MultiProgress::new();
 
-    if log_to_file {
-        let mut log_file = File::create("scan_report.log").expect("Failed to create log file");
-        log_file
-            .write_all(report.as_bytes())
-            .expect("Failed to write to log file");
-        println!("{}", "Report saved to scan_report.log".green().bold());
+    let scan_results = scanner.scan_jar(jar_path, &multi_progress)?;
+
+    println!("Scan complete, {} results:", scan_results.len());
+
+    for result in scan_results.iter() {
+        if result.matches.len() == 1 {
+            let (match_type, matched_string) = &result.matches[0];
+            println!(
+                "File: {} - Type: {}, Value: {}",
+                result.file_path.cyan(),
+                match_type.green(),
+                matched_string.red()
+            );
+        } else {
+            println!("File: {}", result.file_path.cyan());
+            for (match_type, matched_string) in &result.matches {
+                println!(
+                    "  Type: {}, Value: {}",
+                    match_type.green(),
+                    matched_string.red()
+                );
+            }
+        }
     }
+    Ok(())
 }

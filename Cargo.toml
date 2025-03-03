@@ -1,13 +1,16 @@
 [package]
 name = "collapsescanner"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-authors = ["dest4590", "github copilot"]
+authors = ["dest4590", "github copilot", "gemini 2.0 flash"]
 
 [dependencies]
-colored = "2.2.0"
+colored = "3.0.0"
 regex = "1.11.1"
 zip = "2.2.2"
+indicatif = "0.17.11"
+lazy_static = "1.5.0"
+url = "2.5.4"
 
 [profile.release]
 codegen-units = 1

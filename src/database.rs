@@ -1,7 +1,7 @@
-use std::sync::LazyLock;
+use lazy_static::lazy_static;
 
-pub static GOOD_LINKS: LazyLock<Vec<String>> = LazyLock::new(|| {
-    vec![
+lazy_static! {
+    pub static ref GOOD_LINKS: Vec<String> = vec![
         "minecraft.org".to_string(),
         "minecraft.net".to_string(),
         "netty.io".to_string(),
@@ -37,6 +37,7 @@ pub static GOOD_LINKS: LazyLock<Vec<String>> = LazyLock::new(|| {
         "paulscode/sound/".to_string(),
         "api.spiget.org".to_string(),
         "login.live.com".to_string(),
-        "slf4j.org".to_string(),
-    ]
-});
+        "www.slf4j.org".to_string(),
+        "www.rfc-editor.org".to_string()
+    ];
+}

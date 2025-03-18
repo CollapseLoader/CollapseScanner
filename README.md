@@ -4,8 +4,25 @@
 
 <h2 align=center>Jar scanning tool for links and ips</h2>
 
+## Arguments
+
+> Since version 0.1.2, the following arguments have been added:
+
+- `--help`: Really?
+- `--log <FILE>`:  Log the results to a file.
+
+In addition, users can now simply add a file as an argument to scan it:
+```
+CollapseScanner.exe program.jar
+```
+
+Or with cargo
+```sh
+cargo run -- <path-to-file> (or arguments)
+```
+
 ## Showcase
-<img src="https://github.com/user-attachments/assets/68dd7cd5-bd3b-4a10-ab40-eb623cdd8397" width=1000>
+<img src="https://github.com/user-attachments/assets/b9a219e4-50d5-4661-ab82-c4976b2913ed" width=500>
 
 ### Build Instructions:
 

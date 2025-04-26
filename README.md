@@ -24,7 +24,7 @@ git clone https://github.com/dest4590/CollapseScanner.git
 cargo build --release
 ```
 
-# The binary will be available at target/release/collapsescanner
+The binary will be available at target/release/collapsescanner
 
 ## 📝 Usage
 

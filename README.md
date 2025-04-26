@@ -1,40 +1,109 @@
-<p align=center><img src="https://github.com/user-attachments/assets/c3cc15f9-b4fd-4aa5-b08b-d5e4948dee01" width=100></p>
+# CollapseScanner
 
-<h1 align=center>CollapseScanner</h1>
+**CollapseScanner** - An advanced JAR/class file reverse engineering and analysis tool designed to detect suspicious patterns in Java applications, mods, and plugins.
 
-<h2 align=center>Jar scanning tool for links and ips</h2>
+## 🌟 Features
 
-## Arguments
+-   🔍 **Scan multiple detection categories**:
+    -   🌐 **Network**: Detect potentially malicious IPs and URLs
+    -   🔒 **Crypto**: Find cryptographic implementations and sensitive material
+    -   ⚠️ **Malicious**: Identify suspicious code patterns (backdoors, exploits, etc.)
+-   📦 **Resource extraction**: Extract all resources from JAR files
+-   🔤 **String analysis**: Extract and analyze all strings from class files
+-   🔢 **Entropy calculation**: Calculate entropy of files to help identify obfuscated code
 
-> Since version 0.1.2, the following arguments have been added:
+## ⚙️ Installation
 
-- `--help`: Really?
-- `--log <FILE>`:  Log the results to a file.
+### From Source
 
-In addition, users can now simply add a file as an argument to scan it:
-```
-CollapseScanner.exe program.jar
-```
-
-Or with cargo
-```sh
-cargo run -- <path-to-file> (or arguments)
-```
-
-## Showcase
-<img src="https://github.com/user-attachments/assets/b9a219e4-50d5-4661-ab82-c4976b2913ed" width=500>
-
-### Build Instructions:
-
-1. Clone the repository:
-
-```sh
-git clone https://github.com/CollapseLoader/CollapseScanner.git
-cd CollapseScanner
+```bash
+git clone https://github.com/dest4590/CollapseScanner.git
 ```
 
-2. Build the project:
-
-```sh
+```bash
 cargo build --release
+```
+
+# The binary will be available at target/release/collapsescanner
+
+## 📝 Usage
+
+```bash
+# Basic scan of a JAR file
+collapsescanner path/to/file.jar
+
+# Scan a directory for all JAR and class files
+collapsescanner path/to/directory
+
+# Different detection modes
+collapsescanner path/to/file.jar --mode network
+collapsescanner path/to/file.jar --mode crypto
+collapsescanner path/to/file.jar --mode malicious
+
+# Extract all resources from the JAR
+collapsescanner path/to/file.jar --extract
+
+# Extract all strings from class files
+collapsescanner path/to/file.jar --strings
+
+# Specify output directory
+collapsescanner path/to/file.jar --extract --output path/to/output/dir
+
+# Export analysis to JSON
+collapsescanner path/to/file.jar --json
+```
+
+## 🔍 Command-line Options
+
+| Option      | Description                                                          |
+| ----------- | -------------------------------------------------------------------- |
+| `path`      | Path to a JAR file, class file, or directory to scan                 |
+| `--mode`    | Detection mode: `network`, `crypto`, `malicious`, or `all` (default) |
+| `--extract` | Extract all resources from JAR files                                 |
+| `--strings` | Extract all strings from class files                                 |
+| `--output`  | Specify the output directory (default: ./extracted)                  |
+| `--json`    | Export results in JSON format                                        |
+
+## 🛡️ Detection Capabilities
+
+CollapseScanner analyzes Java class files to find:
+
+-   **Network indicators**:
+
+    -   IP addresses (IPv4)
+    -   URLs and domains
+    -   Network-related strings
+
+-   **Cryptographic indicators**:
+
+    -   Encryption algorithms (AES, DES, RSA)
+    -   Hash functions (MD5, SHA)
+    -   Key management and password handling
+
+-   **Suspicious patterns**:
+    -   Backdoors
+    -   Code injection
+    -   Exploits
+    -   Payloads
+    -   Keyloggers
+    -   Data theft mechanisms
+
+## 📋 Example Output
+
+```
+==== CollapseScanner - Advanced JAR Reverse Engineering Tool ====
+Scanning for suspicious and malicious patterns...
+
+🔍 Found suspicious patterns:
+
+📄 suspicious.jar/com/example/malicious/Payload.class
+  🌐 IP Address: 192.168.1.100
+  🔗 URL: http://malicious-domain.com/c2
+  🔒 Crypto: encrypt: AES encryption used here
+  ⚠️ Suspicious: payload: Executing payload
+
+Total: 4 suspicious patterns
+
+📦 Resources extracted to ./extracted
+🔤 Strings extracted to ./extracted
 ```

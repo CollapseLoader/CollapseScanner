@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_path = &args[1];
     let output_path = &args[2];
 
-    println!("🔍 JarFixer");
+    println!("🔍 Remapper for \"trailing slash\" technique");
     println!("📥 Input JAR:  {}", input_path);
     println!("📤 Output JAR: {}", output_path);
 
@@ -82,7 +82,7 @@ fn process_jar(input_path: &str, output_path: &str) -> ZipResult<()> {
 
     let pb = ProgressBar::new(num_entries as u64);
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} entries ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} entries")
         .unwrap()
         .progress_chars("=>-"));
 
@@ -116,7 +116,6 @@ fn process_jar(input_path: &str, output_path: &str) -> ZipResult<()> {
         pb.inc(1);
     }
 
-    pb.finish_with_message("Writing completed");
     zip_writer.finish()?;
 
     Ok(())

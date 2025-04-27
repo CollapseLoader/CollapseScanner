@@ -6,8 +6,8 @@ authors = ["dest4590"]
 default-run = "collapsescanner"
 
 [[bin]]
-name = "fixer"
-path = "scripts/jarfixer.rs"
+name = "remapper"
+path = "scripts/remapper.rs"
 
 [dependencies]
 colored = "3.0.0"

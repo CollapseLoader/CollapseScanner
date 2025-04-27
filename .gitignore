@@ -2,3 +2,5 @@
 *.jar
 *.log
 /extracted
+TODO.md
+.vscode/

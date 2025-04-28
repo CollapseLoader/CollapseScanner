@@ -74,9 +74,6 @@ collapsescanner path/to/file.jar --json
 # Run with 8 processing threads
 collapsescanner path/to/file.jar --threads 8
 
-# Fast scan - stop after finding first suspicious item
-collapsescanner path/to/file.jar --fast
-
 # Path filtering
 collapsescanner path/to/file.jar --exclude "assets/**" --exclude "*.log" --find "com/example/*"
 
@@ -86,22 +83,20 @@ collapsescanner path/to/file.jar --ignore-suspicious path/to/ignored_keywords.tx
 
 ## 🔍 Command-line Options
 
-| Option                | Description                                                                          |
-| --------------------- | ------------------------------------------------------------------------------------ |
-| `path`                | Path to a JAR file, class file, or directory to scan                                 |
-| `--mode`              | Detection mode: `network`, `crypto`, `malicious`, `obfuscation`, or `all` (default)  |
-| `--extract`           | Extract all resources from JAR files                                                 |
-| `--strings`           | Extract all strings from class files                                                 |
-| `--output`            | Specify the output directory (default: ./extracted)                                  |
-| `--json`              | Export results in JSON format                                                        |
-| `-v, --verbose`       | Enable verbose output (shows size/entropy, etc.)                                     |
-| `--threads`           | Number of threads to use for parallel processing (0 = automatic based on CPU cores)  |
-| `--fast`              | Fast scan mode - stops processing a JAR file after finding the first suspicious item |
-| `--max-findings`      | Maximum number of findings before stopping (default: 50, 0 = no limit)               |
-| `--exclude`           | Exclude paths matching the wildcard pattern (can be used multiple times)             |
-| `--find`              | Only scan paths matching the wildcard pattern (can be used multiple times)           |
-| `--ignore-suspicious` | Path to a .txt file with suspicious keywords to ignore (one per line)                |
-| `--ignore-crypto`     | Path to a .txt file with crypto keywords to ignore (one per line)                    |
+| Option                | Description                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `path`                | Path to a JAR file, class file, or directory to scan                                |
+| `--mode`              | Detection mode: `network`, `crypto`, `malicious`, `obfuscation`, or `all` (default) |
+| `--extract`           | Extract all resources from JAR files                                                |
+| `--strings`           | Extract all strings from class files                                                |
+| `--output`            | Specify the output directory (default: ./extracted)                                 |
+| `--json`              | Export results in JSON format                                                       |
+| `-v, --verbose`       | Enable verbose output (shows size/entropy, etc.)                                    |
+| `--threads`           | Number of threads to use for parallel processing (0 = automatic based on CPU cores) |
+| `--exclude`           | Exclude paths matching the wildcard pattern (can be used multiple times)            |
+| `--find`              | Only scan paths matching the wildcard pattern (can be used multiple times)          |
+| `--ignore-suspicious` | Path to a .txt file with suspicious keywords to ignore (one per line)               |
+| `--ignore-crypto`     | Path to a .txt file with crypto keywords to ignore (one per line)                   |
 
 ## 🛡️ Detection Capabilities
 

@@ -81,10 +81,14 @@ fn process_jar(input_path: &str, output_path: &str) -> ZipResult<()> {
     let mut zip_writer = ZipWriter::new(output_writer);
 
     let pb = ProgressBar::new(num_entries as u64);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} entries")
-        .unwrap()
-        .progress_chars("=>-"));
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} entries",
+            )
+            .unwrap()
+            .progress_chars("=>-"),
+    );
 
     println!("🔧 Building fixed JAR file...");
 

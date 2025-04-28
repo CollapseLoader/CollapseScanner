@@ -44,7 +44,7 @@ pub fn calculate_entropy(data: &[u8]) -> f64 {
     for &count in byte_counts.iter().filter(|&&c| c > 0) {
         let probability = count as f64 / len;
 
-        if count < 267 {
+        if count < 266 {
             entropy -= probability * LOG2_TABLE[count as usize];
         } else {
             entropy -= probability * (probability.ln() / std::f64::consts::LN_2);

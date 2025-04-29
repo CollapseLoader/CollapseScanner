@@ -39,7 +39,7 @@ pub fn parse_class_structure(
         });
     }
 
-    let constant_pool = parse_constant_pool(&mut cursor, cp_count, original_path_str, verbose)?;
+    let constant_pool = parse_constant_pool(&mut cursor, cp_count, original_path_str)?;
 
     let resolve_utf8 = |index: u16, context: &str| -> Result<String, ScanError> {
         if index == 0 || (index as usize) > constant_pool.len() {
@@ -310,7 +310,6 @@ fn parse_constant_pool(
     cursor: &mut Cursor<&[u8]>,
     cp_count: u16,
     file_path_str: &str,
-    verbose: bool,
 ) -> Result<Vec<ConstantPoolEntry>, ScanError> {
     if cp_count <= 1 {
         return Ok(Vec::new());
@@ -407,15 +406,8 @@ fn parse_constant_pool(
                 )?;
                 let mut buf = vec![0; length];
                 cursor.read_exact(&mut buf)?;
-                let (cow, _, had_errors) = UTF_8.decode(&buf);
-                if had_errors && verbose {
-                    eprintln!(
-                        "{} Warning: UTF-8 decoding errors in CP index {} ('{}')",
-                        "⚠️".yellow(),
-                        i,
-                        file_path_str
-                    );
-                }
+                let (cow, _, _) = UTF_8.decode(&buf);
+
                 ConstantPoolEntry::Utf8(cow.into_owned())
             }
             7 => ConstantPoolEntry::Class(cursor.read_u16::<BigEndian>()?),

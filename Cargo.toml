@@ -28,6 +28,7 @@ rayon = "1.10.0"
 encoding_rs = "0.8.35"
 wildmatch = "2.4.0"
 lru = "0.14.0"
+sysinfo = "0.34.2"
 
 [profile.release]
 codegen-units = 1

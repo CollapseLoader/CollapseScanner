@@ -1,5 +1,6 @@
 #![allow(clippy::collapsible_else_if)]
 
+mod config;
 mod database;
 mod detection;
 mod errors;
@@ -230,39 +231,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut sorted_significant_results = significant_results;
                 sorted_significant_results.sort_by_key(|r| &r.file_path);
 
-                for result in sorted_significant_results {
-                    println!(
-                        "\n{}",
-                        format!("📄 File: {}", result.file_path).bright_cyan()
-                    );
-                    if scanner.options.verbose {
-                        if let Some(ri) = &result.resource_info {
-                            let class_type = if ri.is_class_file {
-                                " (Standard Class)"
-                            } else if ri.is_dead_class_candidate {
-                                " (Custom JVM Class Candidate)"
-                            } else if ri.path.ends_with(".class") || ri.path.ends_with(".class/") {
-                                " (Non-standard Class File)"
-                            } else {
-                                ""
-                            };
+                for result in &sorted_significant_results {
+                    if let Some(ri) = &result.resource_info {
+                        let class_type = if ri.is_dead_class_candidate {
+                            " (Custom JVM Class Candidate)"
+                        } else {
+                            ""
+                        };
+
+                        println!(
+                            "\n{}",
+                            format!("📄 File: {}{}", result.file_path, class_type).bright_cyan()
+                        );
+
+                        if scanner.options.verbose {
                             println!(
-                                "   {} Size: {} bytes, Entropy: {:.2}{}",
+                                "   {} Size: {} bytes, Entropy: {:.2}",
                                 "📊".dimmed(),
                                 ri.size,
-                                ri.entropy,
-                                class_type.dimmed()
+                                ri.entropy
                             );
-                        } else if result.class_details.is_some() {
-                            println!(
-                                "   {} {}",
-                                "ℹ️".dimmed(),
-                                "(Standard Class - Info Missing)".dimmed()
-                            );
+
+                            if result.matches.is_empty() {
+                                println!("   {}", "No specific findings in this file.".dimmed());
+                            }
                         }
-                        if result.matches.is_empty() {
-                            println!("   {}", "No specific findings in this file.".dimmed());
-                        }
+                    } else if result.class_details.is_some() {
+                        println!(
+                            "   {} {}",
+                            "ℹ️".dimmed(),
+                            "(Standard Class - Info Missing)".dimmed()
+                        );
                     }
 
                     let mut sorted_matches = result.matches.clone();
@@ -271,18 +270,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for (finding_type, value) in &sorted_matches {
                         *findings_by_type.entry(finding_type.clone()).or_insert(0) += 1;
                         total_findings += 1;
-                        let (icon, color) = match finding_type {
-                            FindingType::IpAddress | FindingType::IpV6Address => {
-                                ("🌐", "bright_red")
-                            }
-                            FindingType::Url => ("🔗", "bright_red"),
-                            FindingType::Crypto => ("🔒", "bright_yellow"),
-                            FindingType::SuspiciousKeyword => ("❗", "red"),
-                            FindingType::ObfuscationLongName => ("📏", "bright_magenta"),
-                            FindingType::ObfuscationChars => ("❓", "magenta"),
-                            FindingType::ObfuscationUnicode => ("㊙️ ", "magenta"),
-                            FindingType::HighEntropy => ("🔥", "yellow"),
-                        };
+
+                        let (icon, color) = finding_type.with_emoji();
+
                         println!(
                             "  {} {}: {}",
                             icon.color(color).bold(),
@@ -294,30 +284,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("\n{}", "==== Scan Summary ====".bright_blue().bold());
                 if total_findings > 0 {
-                    println!(
-                        "{} Total Findings: {}",
-                        "📈".yellow(),
-                        total_findings.to_string().bright_white().bold()
-                    );
-                    let mut sorted_findings: Vec<_> = findings_by_type.iter().collect();
-                    sorted_findings.sort_by_key(|(k, _)| format!("{}", k));
+                    let files_with_findings = sorted_significant_results.len();
+                    let total_danger_score: u16 = sorted_significant_results
+                        .iter()
+                        .map(|r| r.danger_score as u16)
+                        .sum();
 
-                    for (finding_type, count) in sorted_findings {
-                        let color = match finding_type {
-                            FindingType::IpAddress
-                            | FindingType::IpV6Address
-                            | FindingType::Url
-                            | FindingType::SuspiciousKeyword => "bright_red",
-                            FindingType::Crypto | FindingType::HighEntropy => "bright_yellow",
-                            FindingType::ObfuscationLongName
-                            | FindingType::ObfuscationChars
-                            | FindingType::ObfuscationUnicode => "bright_magenta",
-                        };
+                    let avg_danger_score = if files_with_findings > 0 {
+                        (total_danger_score as f32 / files_with_findings as f32).round() as u8
+                    } else {
+                        1
+                    };
+
+                    let score_color = match avg_danger_score {
+                        8..=10 => "bright_red",
+                        5..=7 => "yellow",
+                        3..=4 => "bright_yellow",
+                        _ => "green",
+                    };
+
+                    println!(
+                        "{} Total Findings: {} | Overall Danger Score: {}",
+                        "📈".yellow(),
+                        total_findings.to_string().bright_white().bold(),
+                        format!("{}/10", avg_danger_score).color(score_color).bold()
+                    );
+
+                    println!("{}", "🔍 Findings".yellow().bold());
+                    let mut all_findings: HashMap<FindingType, std::collections::HashSet<String>> =
+                        HashMap::new();
+
+                    for result in &sorted_significant_results {
+                        for (finding_type, value) in &result.matches {
+                            all_findings
+                                .entry(finding_type.clone())
+                                .or_insert_with(std::collections::HashSet::new)
+                                .insert(value.clone());
+                        }
+                    }
+
+                    for (finding_type, values) in &all_findings {
+                        let (icon, color) = finding_type.with_emoji();
+
                         println!(
-                            "  - {}: {}",
-                            finding_type.to_string().color(color),
-                            count.to_string().bright_white()
+                            "  {} {} ({})",
+                            icon.color(color).bold(),
+                            finding_type.to_string().color(color).bold(),
+                            values.len().to_string().bright_white()
                         );
+
+                        for value in values {
+                            println!("    - {}", value.bright_white());
+                        }
                     }
                 } else {
                     println!(

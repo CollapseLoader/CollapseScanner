@@ -8,6 +8,8 @@ pub struct ScanResult {
     pub matches: Vec<(FindingType, String)>,
     pub class_details: Option<ClassDetails>,
     pub resource_info: Option<ResourceInfo>,
+    pub danger_score: u8,
+    pub danger_explanation: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -15,6 +17,7 @@ pub enum FindingType {
     IpAddress,
     IpV6Address,
     Url,
+    SuspiciousUrl,
     Crypto,
     SuspiciousKeyword,
     ObfuscationLongName,
@@ -29,12 +32,29 @@ impl std::fmt::Display for FindingType {
             FindingType::IpAddress => write!(f, "IPv4 Address"),
             FindingType::IpV6Address => write!(f, "IPv6 Address"),
             FindingType::Url => write!(f, "URL"),
+            FindingType::SuspiciousUrl => write!(f, "Suspicious URL"),
             FindingType::Crypto => write!(f, "Crypto Keyword"),
             FindingType::SuspiciousKeyword => write!(f, "Suspicious Keyword"),
             FindingType::ObfuscationLongName => write!(f, "Obfuscation (Long Name)"),
             FindingType::ObfuscationChars => write!(f, "Obfuscation (Unusual Chars)"),
             FindingType::ObfuscationUnicode => write!(f, "Obfuscation (Unicode Name)"),
             FindingType::HighEntropy => write!(f, "High Entropy"),
+        }
+    }
+}
+
+impl FindingType {
+    pub fn with_emoji(&self) -> (&'static str, &'static str) {
+        match self {
+            FindingType::IpAddress | FindingType::IpV6Address => ("🌐", "bright_red"),
+            FindingType::Url => ("🔗", "bright_red"),
+            FindingType::SuspiciousUrl => ("⚠️ ", "yellow"),
+            FindingType::Crypto => ("🔒", "bright_yellow"),
+            FindingType::SuspiciousKeyword => ("❗", "red"),
+            FindingType::ObfuscationLongName => ("📏", "bright_magenta"),
+            FindingType::ObfuscationChars => ("❓", "magenta"),
+            FindingType::ObfuscationUnicode => ("㊙️ ", "magenta"),
+            FindingType::HighEntropy => ("🔥", "yellow"),
         }
     }
 }

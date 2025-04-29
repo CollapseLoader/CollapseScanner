@@ -1,9 +1,8 @@
+use crate::config::SYSTEM_CONFIG;
 use crate::database::GOOD_LINKS;
 use crate::detection::{
-    cache_safe_string, calculate_detection_hash, contains_crypto_indicators,
-    contains_malicious_indicators, contains_network_indicators, is_cached_safe_string,
-    is_obfuscated_name, should_analyze_string, ENTROPY_THRESHOLD, MAX_PATTERN_CHECK_LENGTH,
-    MIN_STRING_LENGTH, NAME_LENGTH_THRESHOLD, RESULT_CACHE_SIZE, SUSPICIOUS_CHAR_THRESHOLD,
+    cache_safe_string, calculate_detection_hash, is_cached_safe_string, is_obfuscated_name,
+    ENTROPY_THRESHOLD, NAME_LENGTH_THRESHOLD, SUSPICIOUS_CHAR_THRESHOLD, SUSPICIOUS_DOMAINS,
 };
 use crate::errors::ScanError;
 use crate::parser::parse_class_structure;
@@ -14,16 +13,16 @@ use crate::utils::{calculate_entropy, extract_domain, get_simple_name, truncate_
 
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
+use lru::LruCache;
 use regex::Regex;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::num::NonZero;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-const BUFFER_SIZE: usize = 512 * 1024;
-use lru::LruCache;
 use walkdir::WalkDir;
 use wildmatch::WildMatch;
 use zip::ZipArchive;
@@ -33,6 +32,7 @@ pub struct CollapseScanner {
     ip_regex: Regex,
     ipv6_regex: Regex,
     url_regex: Regex,
+    suspicious_domains: HashSet<String>,
     crypto_regex: Regex,
     malicious_pattern_regex: Regex,
     suspicious_consecutive_chars_regex: Regex,
@@ -113,21 +113,29 @@ impl CollapseScanner {
             .map(|p| WildMatch::new(p))
             .collect();
 
+        let cache_size = NonZeroUsize::new(SYSTEM_CONFIG.result_cache_size)
+            .unwrap_or_else(|| NonZeroUsize::new(1).unwrap());
+
+        if options.verbose {
+            SYSTEM_CONFIG.log_config();
+        }
+
         Ok(CollapseScanner {
             good_links,
             ip_regex: Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap(),
             ipv6_regex: Regex::new(r"(?i)\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b").unwrap(),
-            url_regex: Regex::new(r#"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»“”‘’]))"#).unwrap(),
+            url_regex: Regex::new(r#"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»""'']))"#).unwrap(),
+            suspicious_domains: SUSPICIOUS_DOMAINS.clone(),
             crypto_regex: Regex::new(r"(?i)\b(aes|des|rsa|md5|sha[1-9]*-?\d*|blowfish|twofish|pgp|gpg|cipher|keystore|keygenerator|secretkey|password|encrypt|decrypt|hash|salt|ivParameterSpec|SecureRandom)\b").unwrap(),
-            malicious_pattern_regex: Regex::new(r"(?i)\b(backdoor|exploit|inject|payload|shellcode|bypass|rootkit|keylog|rat\b|trojan|malware|spyware|meterpreter|cobaltstrike|powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|loadLibrary|download|upload|socket\(|bind\(|connect\(|class\.forName|defineClass|unsafe|jndi|ldap|rmi)\b").unwrap(),
-            suspicious_consecutive_chars_regex: Regex::new(&format!(r"[^a-zA-Z0-9_$/]{{{},}}", SUSPICIOUS_CHAR_THRESHOLD)).unwrap(),
+            malicious_pattern_regex: Regex::new(r"(?i)\b(backdoor|exploit|inject|payload|shellcode|bypass|rootkit|keylog|rat\b|trojan|malware|spyware|meterpreter|cobaltstrike|powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|download|upload|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|invoke|unsafe|jndi|ldap|rmi|base64|decode)\b").unwrap(),
+            suspicious_consecutive_chars_regex: Regex::new(&format!(r"[^a-zA-Z0-9_$/.]{{{},}}", SUSPICIOUS_CHAR_THRESHOLD)).unwrap(),
             ignored_suspicious_keywords,
             ignored_crypto_keywords,
             options,
             found_custom_jvm_indicator: Arc::new(Mutex::new(false)),
             exclude_patterns,
             find_patterns,
-            result_cache: Arc::new(Mutex::new(LruCache::new(NonZero::new(RESULT_CACHE_SIZE).unwrap()))),
+            result_cache: Arc::new(Mutex::new(LruCache::new(cache_size))),
         })
     }
 
@@ -327,36 +335,33 @@ impl CollapseScanner {
         let mut archive = ZipArchive::new(file)?;
         let total_files = archive.len();
         let mut skipped_count = 0;
-
-        if self.options.verbose {
-            println!(
-                "{} Filtering and reading entries from {}",
-                "🔎".blue(),
-                jar_path.display()
-            );
-        }
-
-        let mut entries_to_scan = Vec::with_capacity(total_files / 2);
+        let mut results = Vec::new();
         let mut all_resource_info = if self.options.export_json {
             Vec::with_capacity(total_files)
         } else {
             Vec::new()
         };
 
-        let mut reusable_buffer = Vec::with_capacity(BUFFER_SIZE);
+        if self.options.verbose {
+            println!("{} Scanning JAR file: {}", "🔎".blue(), jar_path.display());
+        }
+
+        // Use the dynamic buffer size
+        let buffer_size = SYSTEM_CONFIG.buffer_size;
+        let mut reusable_buffer = Vec::with_capacity(buffer_size);
 
         let pb_template = if self.options.verbose {
-            format!("{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Reading: {{msg}}", "🔍".green())
+            format!("{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Processing: {{msg}}", "🔍".green())
         } else {
             format!(
-                "{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Reading {}",
+                "{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Processing {}",
                 "🔍".green(),
                 jar_path.file_name().unwrap_or_default().to_string_lossy()
             )
         };
 
-        let pb_read = ProgressBar::new(total_files as u64);
-        pb_read.set_style(
+        let progress_bar = ProgressBar::new(total_files as u64);
+        progress_bar.set_style(
             ProgressStyle::default_bar()
                 .template(&pb_template)?
                 .progress_chars("=> "),
@@ -373,11 +378,10 @@ impl CollapseScanner {
                         jar_path.display(),
                         e
                     );
+                    progress_bar.inc(1);
                     continue;
                 }
             };
-
-            pb_read.inc(1);
 
             let original_entry_name = match file.enclosed_name() {
                 Some(p) => p.to_string_lossy().replace('\\', "/"),
@@ -385,17 +389,17 @@ impl CollapseScanner {
             };
 
             if self.options.verbose {
-                pb_read.set_message(original_entry_name.clone());
+                progress_bar.set_message(original_entry_name.clone());
             }
 
             if !self.should_scan(&original_entry_name) {
                 skipped_count += 1;
+                progress_bar.inc(1);
                 continue;
             }
 
-            let file_size = file.size() as usize;
-
             reusable_buffer.clear();
+            let file_size = file.size() as usize;
 
             if reusable_buffer.capacity() < file_size {
                 reusable_buffer.reserve(file_size - reusable_buffer.capacity());
@@ -408,6 +412,7 @@ impl CollapseScanner {
                     original_entry_name,
                     e
                 );
+                progress_bar.inc(1);
                 continue;
             }
 
@@ -429,8 +434,24 @@ impl CollapseScanner {
                     }
 
                     if resource_info.is_class_file || resource_info.is_dead_class_candidate {
-                        let data_to_scan = reusable_buffer.clone();
-                        entries_to_scan.push((original_entry_name, data_to_scan, resource_info));
+                        match self.scan_class_data(
+                            &reusable_buffer,
+                            &original_entry_name,
+                            Some(resource_info.clone()),
+                        ) {
+                            Ok(Some(scan_result)) => {
+                                results.push(scan_result);
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                eprintln!(
+                                    "{} Error processing class {}: {}",
+                                    "⚠️".yellow(),
+                                    original_entry_name,
+                                    e
+                                );
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -442,84 +463,16 @@ impl CollapseScanner {
                     );
                 }
             }
-        }
-        pb_read.finish_with_message(format!("Finished reading {} entries", total_files));
 
-        if self.options.verbose {
-            println!(
-                "{} Filtered {} entries, {} class candidates found for analysis{}",
-                "📊".blue(),
-                total_files,
-                entries_to_scan.len(),
-                if skipped_count > 0 {
-                    format!(" ({} skipped by filters)", skipped_count).dimmed()
-                } else {
-                    "".into()
-                }
-            );
+            progress_bar.inc(1);
         }
 
-        if entries_to_scan.is_empty()
-            && !self.options.extract_resources
-            && !self.options.export_json
-        {
-            if self.options.verbose {
-                println!(
-                    "{} No class files found for analysis after filtering.",
-                    "ℹ️".blue()
-                );
-            }
-        } else if entries_to_scan.is_empty() {
-            if self.options.verbose {
-                println!("{} No class files found for analysis, but extraction/export may have occurred.", "ℹ️".blue());
-            }
-        }
-
-        let pb_template_analyze = if self.options.verbose {
-            format!("{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Analyzing: {{msg}}", "🔬".green())
-        } else {
-            format!(
-                "{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Analyzing {}",
-                "🔬".green(),
-                jar_path.file_name().unwrap_or_default().to_string_lossy()
-            )
-        };
-
-        let entries_count = entries_to_scan.len();
-        let pb_analyze = ProgressBar::new(entries_count as u64);
-        pb_analyze.set_style(
-            ProgressStyle::default_bar()
-                .template(&pb_template_analyze)?
-                .progress_chars("=> "),
-        );
-
-        let results: Vec<ScanResult> = entries_to_scan
-            .into_iter()
-            .filter_map(|(original_path, file_data, resource_info)| {
-                if self.options.verbose {
-                    pb_analyze.set_message(original_path.clone());
-                }
-                let result = self.scan_class_data(&file_data, &original_path, Some(resource_info));
-
-                pb_analyze.inc(1);
-
-                match result {
-                    Ok(Some(scan_result)) => Some(scan_result),
-                    Ok(None) => None,
-                    Err(e) => {
-                        eprintln!(
-                            "{} Error processing class {}: {}",
-                            "⚠️".yellow(),
-                            original_path,
-                            e
-                        );
-                        None
-                    }
-                }
-            })
-            .collect();
-
-        pb_analyze.finish_with_message(format!("Finished analyzing {} classes", entries_count));
+        progress_bar.finish_with_message(format!(
+            "Finished processing {} files ({} skipped, {} analyzed)",
+            total_files,
+            skipped_count,
+            total_files - skipped_count
+        ));
 
         if self.options.export_json && !all_resource_info.is_empty() {
             let resources_json_path = self.options.output_dir.join(format!(
@@ -574,7 +527,7 @@ impl CollapseScanner {
             is_class_name_candidate && data.len() >= 4 && &data[0..4] == b"\xCA\xFE\xBA\xBE";
 
         let is_dead_class_candidate =
-            is_class_name_candidate && data.len() >= 2 && &data[0..2] == b"\xDE\xAD";
+            is_class_name_candidate && data.len() >= 2 && &data[0..2] != b"\xCA\xFE";
 
         Ok(ResourceInfo {
             path: original_path_str.to_string(),
@@ -596,7 +549,7 @@ impl CollapseScanner {
             None => self.analyze_resource(original_path_str, &data)?,
         };
 
-        let result = self
+        let mut result = self
             .scan_class_data(&data, &res_info.path, Some(res_info.clone()))?
             .unwrap_or_else(|| {
                 if self.options.verbose || self.options.export_json {
@@ -604,17 +557,34 @@ impl CollapseScanner {
                         file_path: res_info.path.clone(),
                         matches: Vec::new(),
                         class_details: None,
-                        resource_info: Some(res_info),
+                        resource_info: Some(res_info.clone()),
+                        danger_score: 1,
+                        danger_explanation: vec!["No suspicious elements detected.".to_string()],
                     }
                 } else {
                     ScanResult {
                         file_path: res_info.path.clone(),
                         matches: vec![],
                         class_details: None,
-                        resource_info: Some(res_info),
+                        resource_info: Some(res_info.clone()),
+                        danger_score: 1,
+                        danger_explanation: vec!["No suspicious elements detected.".to_string()],
                     }
                 }
             });
+
+        // Add danger score and explanation if not already set
+        if result.danger_score == 0 {
+            let danger_score =
+                self.calculate_danger_score(&result.matches, result.resource_info.as_ref());
+            let danger_explanation = self.generate_danger_explanation(
+                danger_score,
+                &result.matches,
+                result.resource_info.as_ref(),
+            );
+            result.danger_score = danger_score;
+            result.danger_explanation = danger_explanation;
+        }
 
         Ok(result)
     }
@@ -629,11 +599,21 @@ impl CollapseScanner {
 
         if let Some(cached_findings) = self.get_cached_findings(data_hash) {
             if !cached_findings.is_empty() || self.options.verbose || self.options.export_json {
+                let danger_score =
+                    self.calculate_danger_score(&cached_findings, resource_info.as_ref());
+                let danger_explanation = self.generate_danger_explanation(
+                    danger_score,
+                    &cached_findings,
+                    resource_info.as_ref(),
+                );
+
                 return Ok(Some(ScanResult {
                     file_path: original_path_str.to_string(),
                     matches: cached_findings,
                     class_details: None,
                     resource_info,
+                    danger_score,
+                    danger_explanation,
                 }));
             } else {
                 return Ok(None);
@@ -655,11 +635,20 @@ impl CollapseScanner {
             self.cache_findings(data_hash, &findings);
 
             if !findings.is_empty() || self.options.verbose || self.options.export_json {
+                let danger_score = self.calculate_danger_score(&findings, resource_info.as_ref());
+                let danger_explanation = self.generate_danger_explanation(
+                    danger_score,
+                    &findings,
+                    resource_info.as_ref(),
+                );
+
                 return Ok(Some(ScanResult {
                     file_path: original_path_str.to_string(),
                     matches: findings,
                     class_details: None,
                     resource_info,
+                    danger_score,
+                    danger_explanation,
                 }));
             } else {
                 return Ok(None);
@@ -697,42 +686,30 @@ impl CollapseScanner {
                 continue;
             }
 
-            if should_analyze_string(string) {
-                let findings_before = findings.len();
+            let findings_before = findings.len();
 
-                match self.options.mode {
-                    DetectionMode::All => {
-                        if contains_network_indicators(string) {
-                            self.check_network_patterns(string, &mut findings);
-                        }
-                        if contains_crypto_indicators(string) {
-                            self.check_crypto_patterns(string, &mut findings);
-                        }
-                        if contains_malicious_indicators(string) {
-                            self.check_malicious_patterns(string, &mut findings);
-                        }
-                    }
-                    DetectionMode::Network => {
-                        if contains_network_indicators(string) {
-                            self.check_network_patterns(string, &mut findings);
-                        }
-                    }
-                    DetectionMode::Crypto => {
-                        if contains_crypto_indicators(string) {
-                            self.check_crypto_patterns(string, &mut findings);
-                        }
-                    }
-                    DetectionMode::Malicious => {
-                        if contains_malicious_indicators(string) {
-                            self.check_malicious_patterns(string, &mut findings);
-                        }
-                    }
-                    _ => {}
+            match self.options.mode {
+                DetectionMode::All => {
+                    self.check_network_patterns(string, &mut findings);
+                    self.check_suspicious_url_patterns(string, &mut findings);
+                    self.check_crypto_patterns(string, &mut findings);
+                    self.check_malicious_patterns(string, &mut findings);
                 }
+                DetectionMode::Network => {
+                    self.check_network_patterns(string, &mut findings);
+                    self.check_suspicious_url_patterns(string, &mut findings);
+                }
+                DetectionMode::Crypto => {
+                    self.check_crypto_patterns(string, &mut findings);
+                }
+                DetectionMode::Malicious => {
+                    self.check_malicious_patterns(string, &mut findings);
+                }
+                _ => {}
+            }
 
-                if findings_before == findings.len() {
-                    cache_safe_string(string);
-                }
+            if findings_before == findings.len() {
+                cache_safe_string(string);
             }
         }
 
@@ -743,11 +720,17 @@ impl CollapseScanner {
         }
 
         if !findings.is_empty() || self.options.verbose || self.options.export_json {
+            let danger_score = self.calculate_danger_score(&findings, resource_info.as_ref());
+            let danger_explanation =
+                self.generate_danger_explanation(danger_score, &findings, resource_info.as_ref());
+
             Ok(Some(ScanResult {
                 file_path: original_path_str.to_string(),
                 matches: findings,
                 class_details: Some(class_details),
                 resource_info,
+                danger_score,
+                danger_explanation,
             }))
         } else {
             Ok(None)
@@ -755,51 +738,54 @@ impl CollapseScanner {
     }
 
     fn check_network_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if string.len() < MIN_STRING_LENGTH {
-            return;
-        }
-
-        let check_string = if string.len() > MAX_PATTERN_CHECK_LENGTH {
-            &string[0..MAX_PATTERN_CHECK_LENGTH]
-        } else {
-            string
-        };
-
-        if let Some(cap) = self.ip_regex.captures(check_string) {
+        if let Some(cap) = self.ip_regex.captures(string) {
             findings.push((
                 FindingType::IpAddress,
                 cap.get(0).unwrap().as_str().to_string(),
             ));
         }
 
-        if let Some(cap) = self.ipv6_regex.captures(check_string) {
+        if let Some(cap) = self.ipv6_regex.captures(string) {
             findings.push((
                 FindingType::IpV6Address,
                 cap.get(0).unwrap().as_str().to_string(),
             ));
         }
 
-        if let Some(cap) = self.url_regex.captures(check_string) {
-            let url = cap.get(0).unwrap().as_str().to_string();
-            let domain = extract_domain(&url);
+        if let Some(cap) = self.url_regex.captures(string) {
+            let url_match = cap.get(0).unwrap().as_str();
+            let domain = extract_domain(url_match);
+
             if !domain.is_empty() && !self.is_good_link(&domain) {
-                findings.push((FindingType::Url, url));
+                if !self.suspicious_domains.contains(&domain.to_lowercase()) {
+                    findings.push((FindingType::Url, url_match.to_string()));
+                }
+            }
+        }
+    }
+
+    fn check_suspicious_url_patterns(
+        &self,
+        string: &str,
+        findings: &mut Vec<(FindingType, String)>,
+    ) {
+        for cap in self.url_regex.captures_iter(string) {
+            if let Some(url_match) = cap.get(0) {
+                let url_str = url_match.as_str();
+                let domain = extract_domain(url_str);
+
+                if !domain.is_empty() && self.suspicious_domains.contains(&domain.to_lowercase()) {
+                    findings.push((
+                        FindingType::SuspiciousUrl,
+                        format!("Suspicious URL: {}", url_str),
+                    ));
+                }
             }
         }
     }
 
     fn check_crypto_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if string.len() < MIN_STRING_LENGTH {
-            return;
-        }
-
-        let check_string = if string.len() > MAX_PATTERN_CHECK_LENGTH {
-            &string[0..MAX_PATTERN_CHECK_LENGTH]
-        } else {
-            string
-        };
-
-        if let Some(cap) = self.crypto_regex.captures(check_string) {
+        if let Some(cap) = self.crypto_regex.captures(string) {
             let keyword = cap.get(0).unwrap().as_str();
             let keyword_lower = keyword.to_lowercase();
             if !self.ignored_crypto_keywords.contains(&keyword_lower) {
@@ -812,17 +798,7 @@ impl CollapseScanner {
     }
 
     fn check_malicious_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if string.len() < MIN_STRING_LENGTH {
-            return;
-        }
-
-        let check_string = if string.len() > MAX_PATTERN_CHECK_LENGTH {
-            &string[0..MAX_PATTERN_CHECK_LENGTH]
-        } else {
-            string
-        };
-
-        if let Some(cap) = self.malicious_pattern_regex.captures(check_string) {
+        if let Some(cap) = self.malicious_pattern_regex.captures(string) {
             let keyword = cap.get(0).unwrap().as_str();
             let keyword_lower = keyword.to_lowercase();
             if !self.ignored_suspicious_keywords.contains(&keyword_lower) {
@@ -1059,5 +1035,186 @@ impl CollapseScanner {
             }
         }
         Ok(())
+    }
+
+    fn calculate_danger_score(
+        &self,
+        findings: &[(FindingType, String)],
+        resource_info: Option<&ResourceInfo>,
+    ) -> u8 {
+        if findings.is_empty() {
+            return 1;
+        }
+
+        let mut score = 0;
+
+        let mut type_counts: HashMap<FindingType, usize> = HashMap::new();
+        for (finding_type, _) in findings {
+            *type_counts.entry(finding_type.clone()).or_insert(0) += 1;
+        }
+
+        let suspicious_url_count = type_counts.get(&FindingType::SuspiciousUrl).unwrap_or(&0);
+        let ip_address_count = type_counts.get(&FindingType::IpAddress).unwrap_or(&0)
+            + type_counts.get(&FindingType::IpV6Address).unwrap_or(&0);
+        let url_count = type_counts.get(&FindingType::Url).unwrap_or(&0);
+        let crypto_count = type_counts.get(&FindingType::Crypto).unwrap_or(&0);
+        let suspicious_keyword_count = type_counts
+            .get(&FindingType::SuspiciousKeyword)
+            .unwrap_or(&0);
+        let obfuscation_count = type_counts
+            .get(&FindingType::ObfuscationLongName)
+            .unwrap_or(&0)
+            + type_counts
+                .get(&FindingType::ObfuscationChars)
+                .unwrap_or(&0)
+            + type_counts
+                .get(&FindingType::ObfuscationUnicode)
+                .unwrap_or(&0);
+        let high_entropy_count = type_counts.get(&FindingType::HighEntropy).unwrap_or(&0);
+
+        score += (suspicious_url_count * 3).min(4);
+        score += (ip_address_count * 2).min(3);
+        score += (url_count).min(&3);
+        score += (suspicious_keyword_count * 2).min(4);
+        score += (crypto_count).min(&2);
+        score += (obfuscation_count).min(3);
+        score += (high_entropy_count * 2).min(2);
+
+        if let Some(ri) = resource_info {
+            if ri.is_dead_class_candidate {
+                score += 2;
+            }
+
+            if ri.entropy > ENTROPY_THRESHOLD + 0.3 {
+                score += 1;
+            }
+        }
+
+        if *suspicious_url_count > 0 && (*suspicious_keyword_count > 0 || ip_address_count > 0) {
+            score += 2;
+        }
+
+        score.min(10).max(1) as u8
+    }
+
+    fn generate_danger_explanation(
+        &self,
+        score: u8,
+        findings: &[(FindingType, String)],
+        resource_info: Option<&ResourceInfo>,
+    ) -> Vec<String> {
+        if findings.is_empty() {
+            return vec!["No suspicious elements detected.".to_string()];
+        }
+
+        let mut explanations = Vec::new();
+
+        if score >= 8 {
+            explanations.push(
+                "⚠️ HIGH RISK: This file contains multiple high-risk indicators!".to_string(),
+            );
+        } else if score >= 5 {
+            explanations.push(
+                "⚠️ MODERATE RISK: This file contains several suspicious elements.".to_string(),
+            );
+        } else if score >= 3 {
+            explanations.push(
+                "⚠️ LOW RISK: This file contains some potentially concerning elements.".to_string(),
+            );
+        } else {
+            explanations
+                .push("✅ MINIMAL RISK: Few or no concerning elements detected.".to_string());
+        }
+
+        // Group findings by type
+        let mut by_type: HashMap<FindingType, Vec<String>> = HashMap::new();
+        for (finding_type, value) in findings {
+            by_type
+                .entry(finding_type.clone())
+                .or_default()
+                .push(value.clone());
+        }
+
+        // Generate specific explanations based on finding types
+        if let Some(urls) = by_type.get(&FindingType::SuspiciousUrl) {
+            if !urls.is_empty() {
+                explanations.push(format!(
+                    "Found {} suspicious URL(s) including Discord webhooks that may be used for data exfiltration.",
+                    urls.len()
+                ));
+            }
+        }
+
+        if let Some(ips) = by_type.get(&FindingType::IpAddress) {
+            if !ips.is_empty() {
+                let sample = ips[0].clone();
+                explanations.push(format!(
+                    "Contains {} hardcoded IP address(es) such as {} that may indicate communication with malicious servers.",
+                    ips.len(), sample
+                ));
+            }
+        }
+
+        if let Some(urls) = by_type.get(&FindingType::Url) {
+            if !urls.is_empty() {
+                let domains: Vec<String> = urls
+                    .iter()
+                    .map(|url| extract_domain(url))
+                    .filter(|domain| !domain.is_empty() && !self.is_good_link(domain))
+                    .collect();
+
+                if !domains.is_empty() {
+                    let unique_domains: HashSet<String> = domains.into_iter().collect();
+                    let domain_list = unique_domains
+                        .into_iter()
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    explanations.push(format!(
+                        "Contains connections to {} potentially suspicious domain(s) including: {}{}",
+                        urls.len(),
+                        domain_list,
+                        if urls.len() > 3 { " and others..." } else { "" }
+                    ));
+                }
+            }
+        }
+
+        if let Some(keywords) = by_type.get(&FindingType::SuspiciousKeyword) {
+            if !keywords.is_empty() {
+                explanations.push(format!(
+                    "Contains {} suspicious code pattern(s) that may indicate malicious behavior.",
+                    keywords.len()
+                ));
+            }
+        }
+
+        if let Some(obfuscated) = by_type.get(&FindingType::ObfuscationChars) {
+            if !obfuscated.is_empty() {
+                explanations.push(
+                    "Uses obfuscated code, which may be trying to hide malicious functionality."
+                        .to_string(),
+                );
+            }
+        }
+
+        if let Some(high_entropy) = by_type.get(&FindingType::HighEntropy) {
+            if !high_entropy.is_empty() && resource_info.is_some() {
+                let ri = resource_info.unwrap();
+                explanations.push(format!(
+                    "High entropy value ({:.2}) indicating potential obfuscation or encryption.",
+                    ri.entropy
+                ));
+            }
+        }
+
+        if resource_info.map_or(false, |ri| ri.is_dead_class_candidate) {
+            explanations.push(
+                "Contains custom JVM bytecode (0xDEAD) which may indicate use of a custom classloader to evade detection.".to_string()
+            );
+        }
+
+        explanations
     }
 }

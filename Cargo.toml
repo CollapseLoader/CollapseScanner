@@ -1,6 +1,6 @@
 [package]
 name = "collapsescanner"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["dest4590"]
 default-run = "collapsescanner"
@@ -28,7 +28,7 @@ rayon = "1.10.0"
 encoding_rs = "0.8.35"
 wildmatch = "2.4.0"
 lru = "0.14.0"
-sysinfo = "0.34.2"
+sysinfo = "0.35.0"
 
 [profile.release]
 codegen-units = 1

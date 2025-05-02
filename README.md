@@ -48,55 +48,54 @@ Download the latest release from the [releases page](https://github.com/Collapse
 
 ```bash
 # Basic scan of a JAR file
-collapsescanner path/to/file.jar
+collapsescanner file.jar
 
 # Scan a directory for all JAR and class files
-collapsescanner path/to/directory
+collapsescanner directory
 
 # Different detection modes
-collapsescanner path/to/file.jar --mode network
-collapsescanner path/to/file.jar --mode crypto
-collapsescanner path/to/file.jar --mode malicious
-collapsescanner path/to/file.jar --mode obfuscation
+collapsescanner file.jar --mode network
+collapsescanner file.jar --mode crypto
+collapsescanner file.jar --mode malicious
+collapsescanner file.jar --mode obfuscation
 
 # Extract all resources from the JAR
-collapsescanner path/to/file.jar --extract
+collapsescanner file.jar --extract
 
 # Extract all strings from class files
-collapsescanner path/to/file.jar --strings
+collapsescanner file.jar --strings
 
 # Specify output directory
-collapsescanner path/to/file.jar --extract --output path/to/output/dir
+collapsescanner file.jar --extract --output output/dir
 
 # Export analysis to JSON
-collapsescanner path/to/file.jar --json
+collapsescanner file.jar --json
 
 # Run with 8 processing threads
-collapsescanner path/to/file.jar --threads 8
+collapsescanner file.jar --threads 8
 
 # Path filtering
-collapsescanner path/to/file.jar --exclude "assets/**" --exclude "*.log" --find "com/example/*"
+collapsescanner file.jar --exclude "assets/**" --exclude "*.log" --find "com/example/*"
 
 # Skip specific keywords
-collapsescanner path/to/file.jar --ignore-suspicious path/to/ignored_keywords.txt --ignore-crypto path/to/ignored_crypto.txt
+collapsescanner file.jar --ignore_keywords_file ignore_keywords.txt
 ```
 
 ## 🔍 Command-line Options
 
-| Option                | Description                                                                         |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| `path`                | Path to a JAR file, class file, or directory to scan                                |
-| `--mode`              | Detection mode: `network`, `crypto`, `malicious`, `obfuscation`, or `all` (default) |
-| `--extract`           | Extract all resources from JAR files                                                |
-| `--strings`           | Extract all strings from class files                                                |
-| `--output`            | Specify the output directory (default: ./extracted)                                 |
-| `--json`              | Export results in JSON format                                                       |
-| `-v, --verbose`       | Enable verbose output (shows size/entropy, etc.)                                    |
-| `--threads`           | Number of threads to use for parallel processing (0 = automatic based on CPU cores) |
-| `--exclude`           | Exclude paths matching the wildcard pattern (can be used multiple times)            |
-| `--find`              | Only scan paths matching the wildcard pattern (can be used multiple times)          |
-| `--ignore-suspicious` | Path to a .txt file with suspicious keywords to ignore (one per line)               |
-| `--ignore-crypto`     | Path to a .txt file with crypto keywords to ignore (one per line)                   |
+| Option                   | Description                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| `path`                   | Path to a JAR file, class file, or directory to scan                                |
+| `--mode`                 | Detection mode: `network`, `crypto`, `malicious`, `obfuscation`, or `all` (default) |
+| `--extract`              | Extract all resources from JAR files                                                |
+| `--strings`              | Extract all strings from class files                                                |
+| `--output`               | Specify the output directory (default: ./extracted)                                 |
+| `--json`                 | Export results in JSON format                                                       |
+| `-v, --verbose`          | Enable verbose output (shows size/entropy, etc.)                                    |
+| `--threads`              | Number of threads to use for parallel processing (0 = automatic based on CPU cores) |
+| `--exclude`              | Exclude paths matching the wildcard pattern (can be used multiple times)            |
+| `--find`                 | Only scan paths matching the wildcard pattern (can be used multiple times)          |
+| `--ignore_keywords_file` | Path to a .txt file with keywords to ignore (one per line)                          |
 
 ## 🛡️ Detection Capabilities
 
@@ -119,7 +118,7 @@ CollapseScanner analyzes Java class files to find:
     -   Suspicious character sequences
     -   Unicode characters in identifiers
     -   High entropy (potentially obfuscated) files
-    -   Custom JVM bytecode detection (0xDEAD magic bytes)
+    -   Custom JVM bytecode detection (unusual magic bytes)
 
 ## 🛠️ Tools
 
@@ -131,7 +130,7 @@ CollapseScanner analyzes Java class files to find:
 
 ```bash
 # If running from the source directory
-cargo run --bin remapper path/to/input.jar path/to/output.jar
+cargo run --bin remapper input.jar output.jar
 ```
 
 #### Example output:

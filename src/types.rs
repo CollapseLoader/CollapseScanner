@@ -110,8 +110,7 @@ pub struct ScannerOptions {
     pub export_json: bool,
     pub mode: DetectionMode,
     pub verbose: bool,
-    pub ignore_suspicious_file: Option<PathBuf>,
-    pub ignore_crypto_file: Option<PathBuf>,
+    pub ignore_keywords_file: Option<PathBuf>,
     pub exclude_patterns: Vec<String>,
     pub find_patterns: Vec<String>,
 }
@@ -125,8 +124,7 @@ impl Default for ScannerOptions {
             export_json: false,
             mode: DetectionMode::All,
             verbose: false,
-            ignore_suspicious_file: None,
-            ignore_crypto_file: None,
+            ignore_keywords_file: None,
             exclude_patterns: Vec::new(),
             find_patterns: Vec::new(),
         }

@@ -56,44 +56,22 @@ impl CollapseScanner {
         let mut ignored_suspicious_keywords: HashSet<String> = HashSet::new();
         let mut ignored_crypto_keywords: HashSet<String> = HashSet::new();
 
-        if let Some(ref path) = options.ignore_suspicious_file {
+        if let Some(ref path) = options.ignore_keywords_file {
             if options.verbose {
                 println!(
-                    "{} Loading suspicious keyword ignore list from: {}",
+                    "{} Loading keywords ignore list from: {}",
                     "📄".yellow(),
                     path.display()
                 );
             }
             match Self::load_ignore_list_from_file(path) {
                 Ok(ignored) => {
-                    ignored_suspicious_keywords.extend(ignored);
-                }
-                Err(e) => {
-                    eprintln!(
-                        "{} Warning: Could not load suspicious ignore list from {}: {}",
-                        "⚠️".yellow(),
-                        path.display(),
-                        e
-                    );
-                }
-            }
-        }
-
-        if let Some(ref path) = options.ignore_crypto_file {
-            if options.verbose {
-                println!(
-                    "{} Loading crypto keyword ignore list from: {}",
-                    "📄".yellow(),
-                    path.display()
-                );
-            }
-            match Self::load_ignore_list_from_file(path) {
-                Ok(ignored) => {
+                    ignored_suspicious_keywords.extend(ignored.clone());
                     ignored_crypto_keywords.extend(ignored);
                 }
                 Err(e) => {
                     eprintln!(
-                        "{} Warning: Could not load crypto ignore list from {}: {}",
+                        "{} Warning: Could not load keywords ignore list from {}: {}",
                         "⚠️".yellow(),
                         path.display(),
                         e
@@ -145,24 +123,29 @@ impl CollapseScanner {
             .iter()
             .any(|pattern| pattern.matches(internal_path))
         {
-            if self.options.verbose {}
+            if self.options.verbose {
+                println!(
+                    "{} Skipping excluded file: {}",
+                    "🚫".dimmed(),
+                    internal_path
+                );
+            }
             return false;
         }
 
         if !self.find_patterns.is_empty() {
-            if !self
+            let matches = self
                 .find_patterns
                 .iter()
-                .any(|pattern| pattern.matches(internal_path))
-            {
-                if self.options.verbose {}
+                .any(|pattern| pattern.matches(internal_path));
+
+            if !matches {
                 return false;
             }
         }
 
         true
     }
-
     fn load_ignore_list_from_file(path: &Path) -> Result<HashSet<String>, io::Error> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
@@ -346,19 +329,10 @@ impl CollapseScanner {
             println!("{} Scanning JAR file: {}", "🔎".blue(), jar_path.display());
         }
 
-        // Use the dynamic buffer size
         let buffer_size = SYSTEM_CONFIG.buffer_size;
         let mut reusable_buffer = Vec::with_capacity(buffer_size);
 
-        let pb_template = if self.options.verbose {
-            format!("{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Processing: {{msg}}", "🔍".green())
-        } else {
-            format!(
-                "{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Processing {}",
-                "🔍".green(),
-                jar_path.file_name().unwrap_or_default().to_string_lossy()
-            )
-        };
+        let pb_template = format!("{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} Processing: {{msg}}", "🔍".green());
 
         let progress_bar = ProgressBar::new(total_files as u64);
         progress_bar.set_style(
@@ -373,7 +347,7 @@ impl CollapseScanner {
                 Err(e) => {
                     eprintln!(
                         "{} Error accessing entry {} in {}: {}",
-                        "⚠️".yellow(),
+                        "⚠️ ".yellow(),
                         i,
                         jar_path.display(),
                         e
@@ -388,9 +362,7 @@ impl CollapseScanner {
                 None => String::from_utf8_lossy(file.name_raw()).replace('\\', "/"),
             };
 
-            if self.options.verbose {
-                progress_bar.set_message(original_entry_name.clone());
-            }
+            progress_bar.set_message(original_entry_name.clone());
 
             if !self.should_scan(&original_entry_name) {
                 skipped_count += 1;
@@ -408,7 +380,7 @@ impl CollapseScanner {
             if let Err(e) = file.read_to_end(&mut reusable_buffer) {
                 eprintln!(
                     "{} Error reading content of {}: {}",
-                    "⚠️".yellow(),
+                    "⚠️ ".yellow(),
                     original_entry_name,
                     e
                 );
@@ -420,7 +392,7 @@ impl CollapseScanner {
                 if let Err(e) = self.extract_resource(&original_entry_name, &reusable_buffer) {
                     eprintln!(
                         "{} Error during extraction of {}: {}",
-                        "⚠️".yellow(),
+                        "⚠️ ".yellow(),
                         original_entry_name,
                         e
                     );
@@ -444,12 +416,7 @@ impl CollapseScanner {
                             }
                             Ok(None) => {}
                             Err(e) => {
-                                eprintln!(
-                                    "{} Error processing class {}: {}",
-                                    "⚠️".yellow(),
-                                    original_entry_name,
-                                    e
-                                );
+                                eprintln!("{} Error processing class: {}", "⚠️ ".yellow(), e);
                             }
                         }
                     }
@@ -457,7 +424,7 @@ impl CollapseScanner {
                 Err(e) => {
                     eprintln!(
                         "{} Error analyzing resource {}: {}",
-                        "⚠️".yellow(),
+                        "⚠️ ".yellow(),
                         original_entry_name,
                         e
                     );
@@ -912,9 +879,7 @@ impl CollapseScanner {
             return true;
         }
 
-        self.good_links
-            .iter()
-            .any(|good| lower_domain.ends_with(&format!(".{}", good)))
+        false
     }
 
     fn get_cached_findings(&self, hash: u64) -> Option<Vec<(FindingType, String)>> {

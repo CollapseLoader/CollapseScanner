@@ -49,10 +49,7 @@ struct Args {
     mode: DetectionMode,
 
     #[clap(long, value_parser)]
-    ignore_suspicious: Option<PathBuf>,
-
-    #[clap(long, value_parser)]
-    ignore_crypto: Option<PathBuf>,
+    ignore_keywords: Option<PathBuf>,
 
     #[clap(long, action = clap::ArgAction::Append, value_parser)]
     exclude: Vec<String>,
@@ -76,8 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         export_json: args.json,
         mode: args.mode,
         verbose: args.verbose,
-        ignore_suspicious_file: args.ignore_suspicious,
-        ignore_crypto_file: args.ignore_crypto,
+        ignore_keywords_file: args.ignore_keywords,
         exclude_patterns: args.exclude,
         find_patterns: args.find,
     };
@@ -162,16 +158,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    if let Some(p) = &scanner.options.ignore_suspicious_file {
+    if let Some(p) = &scanner.options.ignore_keywords_file {
         println!(
-            "{} Ignoring Suspicious: {}",
-            "📄".yellow(),
-            p.display().to_string().dimmed()
-        );
-    }
-    if let Some(p) = &scanner.options.ignore_crypto_file {
-        println!(
-            "{} Ignoring Crypto: {}",
+            "{} Ignoring Keywords: {}",
             "📄".yellow(),
             p.display().to_string().dimmed()
         );

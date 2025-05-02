@@ -32,16 +32,16 @@ impl SystemConfig {
 
         let result_cache_size = match available_memory {
             mem if mem < LOW_MEMORY_THRESHOLD => DEFAULT_RESULT_CACHE_SIZE,
-            mem if mem < MEDIUM_MEMORY_THRESHOLD => 16384,   // 16K entries
-            mem if mem < HIGH_MEMORY_THRESHOLD => 65536,     // 64K entries
-            _ => 131072,                                     // 128K entries for high-memory systems
+            mem if mem < MEDIUM_MEMORY_THRESHOLD => 16384, // 16K entries
+            mem if mem < HIGH_MEMORY_THRESHOLD => 65536,   // 64K entries
+            _ => 131072,                                   // 128K entries for high-memory systems
         };
 
         let buffer_size = match available_memory {
             mem if mem < LOW_MEMORY_THRESHOLD => DEFAULT_BUFFER_SIZE,
-            mem if mem < MEDIUM_MEMORY_THRESHOLD => 2 * 1024 * 1024,     // 2 MB
-            mem if mem < HIGH_MEMORY_THRESHOLD => 8 * 1024 * 1024,       // 8 MB
-            _ => 16 * 1024 * 1024,                                       // 16 MB for high-memory systems
+            mem if mem < MEDIUM_MEMORY_THRESHOLD => 2 * 1024 * 1024, // 2 MB
+            mem if mem < HIGH_MEMORY_THRESHOLD => 8 * 1024 * 1024,   // 8 MB
+            _ => 16 * 1024 * 1024, // 16 MB for high-memory systems
         };
 
         let safe_string_cache_capacity = match available_memory {

@@ -1,8 +1,8 @@
 use crate::config::SYSTEM_CONFIG;
 use crate::database::GOOD_LINKS;
 use crate::detection::{
-    cache_safe_string, calculate_detection_hash, is_cached_safe_string, is_obfuscated_name,
-    ENTROPY_THRESHOLD, NAME_LENGTH_THRESHOLD, SUSPICIOUS_CHAR_THRESHOLD, SUSPICIOUS_DOMAINS,
+    cache_safe_string, calculate_detection_hash, is_cached_safe_string,
+    ENTROPY_THRESHOLD, NAME_LENGTH_THRESHOLD, SUSPICIOUS_DOMAINS,
 };
 use crate::errors::ScanError;
 use crate::parser::parse_class_structure;
@@ -35,7 +35,6 @@ pub struct CollapseScanner {
     suspicious_domains: HashSet<String>,
     crypto_regex: Regex,
     malicious_pattern_regex: Regex,
-    suspicious_consecutive_chars_regex: Regex,
     ignored_suspicious_keywords: HashSet<String>,
     ignored_crypto_keywords: HashSet<String>,
     pub options: ScannerOptions,
@@ -105,8 +104,7 @@ impl CollapseScanner {
             url_regex: Regex::new(r#"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»""'']))"#).unwrap(),
             suspicious_domains: SUSPICIOUS_DOMAINS.clone(),
             crypto_regex: Regex::new(r"(?i)\b(aes|des|rsa|md5|sha[1-9]*-?\d*|blowfish|twofish|pgp|gpg|cipher|keystore|keygenerator|secretkey|password|encrypt|decrypt|hash|salt|ivParameterSpec|SecureRandom)\b").unwrap(),
-            malicious_pattern_regex: Regex::new(r"(?i)\b(backdoor|exploit|inject|payload|shellcode|bypass|rootkit|keylog|rat\b|trojan|malware|spyware|meterpreter|cobaltstrike|powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|download|upload|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|invoke|unsafe|jndi|ldap|rmi|base64|decode)\b").unwrap(),
-            suspicious_consecutive_chars_regex: Regex::new(&format!(r"[^a-zA-Z0-9_$/.]{{{},}}", SUSPICIOUS_CHAR_THRESHOLD)).unwrap(),
+            malicious_pattern_regex: Regex::new(r"(?i)\b(backdoor|exploit|payload|shellcode|bypass|rootkit|keylog|rat\b|trojan|malware|spyware|meterpreter|cobaltstrike|powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|download|upload|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|unsafe|jndi|ldap|rmi|base64|decode)\b").unwrap(),
             ignored_suspicious_keywords,
             ignored_crypto_keywords,
             options,
@@ -787,14 +785,6 @@ impl CollapseScanner {
                 return;
             }
 
-            if is_obfuscated_name(name) {
-                findings.push((
-                    FindingType::ObfuscationChars,
-                    format!("{} '{}'", context, name),
-                ));
-                return;
-            }
-
             let name_char_count = name.chars().count();
 
             if name.contains('/')
@@ -813,21 +803,6 @@ impl CollapseScanner {
                 findings.push((
                     FindingType::ObfuscationLongName,
                     format!("{} '{}' (len {})", context, name, name_char_count),
-                ));
-            }
-
-            let simple_name_to_check = get_simple_name(name);
-            if self
-                .suspicious_consecutive_chars_regex
-                .is_match(simple_name_to_check)
-            {
-                findings.push((
-                    FindingType::ObfuscationChars,
-                    format!(
-                        "Consecutive Symbols: {} '{}'",
-                        context,
-                        truncate_string(name, 20)
-                    ),
                 ));
             }
 
@@ -1030,9 +1005,6 @@ impl CollapseScanner {
             .get(&FindingType::ObfuscationLongName)
             .unwrap_or(&0)
             + type_counts
-                .get(&FindingType::ObfuscationChars)
-                .unwrap_or(&0)
-            + type_counts
                 .get(&FindingType::ObfuscationUnicode)
                 .unwrap_or(&0);
         let high_entropy_count = type_counts.get(&FindingType::HighEntropy).unwrap_or(&0);
@@ -1152,15 +1124,6 @@ impl CollapseScanner {
                     "Contains {} suspicious code pattern(s) that may indicate malicious behavior.",
                     keywords.len()
                 ));
-            }
-        }
-
-        if let Some(obfuscated) = by_type.get(&FindingType::ObfuscationChars) {
-            if !obfuscated.is_empty() {
-                explanations.push(
-                    "Uses obfuscated code, which may be trying to hide malicious functionality."
-                        .to_string(),
-                );
             }
         }
 

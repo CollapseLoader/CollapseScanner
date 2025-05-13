@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 pub const NAME_LENGTH_THRESHOLD: usize = 100;
 pub const ENTROPY_THRESHOLD: f64 = 7.2;
-pub const SUSPICIOUS_CHAR_THRESHOLD: usize = 3;
 
 lazy_static::lazy_static! {
     pub static ref SAFE_STRING_CACHE: std::sync::Mutex<std::collections::HashSet<String>> = {
@@ -25,30 +24,6 @@ lazy_static::lazy_static! {
         .map(|&s| s.to_lowercase())
         .collect()
     };
-}
-
-pub fn is_obfuscated_name(name: &str) -> bool {
-    if name.len() <= 2 && name != "of" && name != "to" && name != "at" && name != "id" {
-        return true;
-    }
-
-    let chars: Vec<_> = name.chars().collect();
-    if chars.len() >= 3 {
-        let repeats = chars
-            .windows(3)
-            .filter(|w| w[0] == w[1] && w[1] == w[2])
-            .count();
-        if repeats > 0 {
-            return true;
-        }
-    }
-
-    name.contains("$_")
-        || name.contains("$$")
-        || name.contains("III")
-        || name.contains("lll")
-        || name.contains("OOO")
-        || name.matches('$').count() > 2
 }
 
 pub fn is_cached_safe_string(s: &str) -> bool {

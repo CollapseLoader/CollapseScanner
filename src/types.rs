@@ -21,7 +21,6 @@ pub enum FindingType {
     Crypto,
     SuspiciousKeyword,
     ObfuscationLongName,
-    ObfuscationChars,
     ObfuscationUnicode,
     HighEntropy,
 }
@@ -36,7 +35,6 @@ impl std::fmt::Display for FindingType {
             FindingType::Crypto => write!(f, "Crypto Keyword"),
             FindingType::SuspiciousKeyword => write!(f, "Suspicious Keyword"),
             FindingType::ObfuscationLongName => write!(f, "Obfuscation (Long Name)"),
-            FindingType::ObfuscationChars => write!(f, "Obfuscation (Unusual Chars)"),
             FindingType::ObfuscationUnicode => write!(f, "Obfuscation (Unicode Name)"),
             FindingType::HighEntropy => write!(f, "High Entropy"),
         }
@@ -52,7 +50,6 @@ impl FindingType {
             FindingType::Crypto => ("🔒", "bright_yellow"),
             FindingType::SuspiciousKeyword => ("❗", "red"),
             FindingType::ObfuscationLongName => ("📏", "bright_magenta"),
-            FindingType::ObfuscationChars => ("❓", "magenta"),
             FindingType::ObfuscationUnicode => ("㊙️ ", "magenta"),
             FindingType::HighEntropy => ("🔥", "yellow"),
         }

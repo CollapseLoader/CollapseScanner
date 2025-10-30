@@ -1,8 +1,5 @@
-use indicatif;
-use serde_json;
 use std::io;
 use thiserror::Error;
-use zip;
 
 #[derive(Debug, Error)]
 pub enum ScanError {

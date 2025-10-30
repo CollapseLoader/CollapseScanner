@@ -18,6 +18,7 @@ pub enum FindingType {
     IpV6Address,
     Url,
     SuspiciousUrl,
+    DiscordWebhook,
     Crypto,
     SuspiciousKeyword,
     ObfuscationLongName,
@@ -32,6 +33,7 @@ impl std::fmt::Display for FindingType {
             FindingType::IpV6Address => write!(f, "IPv6 Address"),
             FindingType::Url => write!(f, "URL"),
             FindingType::SuspiciousUrl => write!(f, "Suspicious URL"),
+            FindingType::DiscordWebhook => write!(f, "Discord Webhook"),
             FindingType::Crypto => write!(f, "Crypto Keyword"),
             FindingType::SuspiciousKeyword => write!(f, "Suspicious Keyword"),
             FindingType::ObfuscationLongName => write!(f, "Obfuscation (Long Name)"),
@@ -44,12 +46,13 @@ impl std::fmt::Display for FindingType {
 impl FindingType {
     pub fn with_emoji(&self) -> (&'static str, &'static str) {
         match self {
-            FindingType::IpAddress | FindingType::IpV6Address => ("🌐", "bright_red"),
-            FindingType::Url => ("🔗", "bright_red"),
+            FindingType::IpAddress | FindingType::IpV6Address => ("🌐", "red"),
+            FindingType::Url => ("🔗", "blue"),
             FindingType::SuspiciousUrl => ("⚠️ ", "yellow"),
-            FindingType::Crypto => ("🔒", "bright_yellow"),
+            FindingType::DiscordWebhook => ("🤖", "red"),
+            FindingType::Crypto => ("🔒", "yellow"),
             FindingType::SuspiciousKeyword => ("❗", "red"),
-            FindingType::ObfuscationLongName => ("📏", "bright_magenta"),
+            FindingType::ObfuscationLongName => ("📏", "magenta"),
             FindingType::ObfuscationUnicode => ("㊙️ ", "magenta"),
             FindingType::HighEntropy => ("🔥", "yellow"),
         }

@@ -42,7 +42,7 @@ fn process_jar(input_path: &str, output_path: &str) -> ZipResult<()> {
     let input_file = File::open(input_path)?;
     let mut archive = ZipArchive::new(BufReader::new(input_file))?;
 
-    let temp_dir = tempdir().map_err(|e| zip::result::ZipError::Io(e))?;
+    let temp_dir = tempdir().map_err(zip::result::ZipError::Io)?;
     let num_entries = archive.len();
 
     let mut entries_info = Vec::with_capacity(num_entries);
@@ -67,9 +67,9 @@ fn process_jar(input_path: &str, output_path: &str) -> ZipResult<()> {
             let temp_path = temp_dir.path().join(i.to_string());
             {
                 let mut temp_file =
-                    File::create(&temp_path).map_err(|e| zip::result::ZipError::Io(e))?;
+                    File::create(&temp_path).map_err(zip::result::ZipError::Io)?;
                 io::copy(&mut entry, &mut BufWriter::new(&mut temp_file))
-                    .map_err(|e| zip::result::ZipError::Io(e))?;
+                    .map_err(zip::result::ZipError::Io)?;
             }
             entries_info.push((new_name, compression, unix_mode, is_dir, Some(temp_path)));
         } else {
@@ -108,9 +108,9 @@ fn process_jar(input_path: &str, output_path: &str) -> ZipResult<()> {
             zip_writer.start_file(&name, options)?;
 
             if let Some(path) = temp_path {
-                let temp_file = File::open(path).map_err(|e| zip::result::ZipError::Io(e))?;
+                let temp_file = File::open(path).map_err(zip::result::ZipError::Io)?;
                 let mut reader = BufReader::with_capacity(65536, temp_file);
-                io::copy(&mut reader, &mut zip_writer).map_err(|e| zip::result::ZipError::Io(e))?;
+                io::copy(&mut reader, &mut zip_writer).map_err(zip::result::ZipError::Io)?;
             } else {
                 let mut entry = archive.by_index(i)?;
                 io::copy(&mut entry, &mut zip_writer)?;

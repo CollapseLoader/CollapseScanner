@@ -116,7 +116,7 @@ fn parse_constant_pool(
                 1
             }
 
-            9 | 10 | 11 => {
+            9..=11 => {
                 check_bounds(
                     cursor,
                     4,

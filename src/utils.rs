@@ -65,5 +65,5 @@ pub fn extract_domain(url_str: &str) -> String {
 pub fn get_simple_name(fqn: &str) -> &str {
     let name_part = fqn.strip_suffix('/').unwrap_or(fqn);
 
-    name_part.rsplit(|c| c == '/' || c == '.').next().unwrap()
+    name_part.rsplit(['/', '.']).next().unwrap()
 }

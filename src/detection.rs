@@ -4,14 +4,9 @@ pub const NAME_LENGTH_THRESHOLD: usize = 100;
 pub const ENTROPY_THRESHOLD: f64 = 7.2;
 
 lazy_static::lazy_static! {
-    pub static ref SAFE_STRING_CACHE: std::sync::Mutex<std::collections::HashSet<String>> = {
+    pub static ref SAFE_STRING_CACHE: std::sync::Mutex<lru::LruCache<String, ()>> = {
         let capacity = crate::config::SYSTEM_CONFIG.safe_string_cache_capacity;
-        std::sync::Mutex::new(std::collections::HashSet::with_capacity(capacity))
-    };
-
-    pub static ref OBFUSCATED_NAME_CACHE: std::sync::Mutex<std::collections::HashSet<String>> = {
-        let capacity = crate::config::SYSTEM_CONFIG.obfuscated_name_cache_capacity;
-        std::sync::Mutex::new(std::collections::HashSet::with_capacity(capacity))
+        std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(capacity).unwrap()))
     };
 
     pub static ref SUSPICIOUS_DOMAINS: HashSet<String> = {
@@ -35,7 +30,8 @@ pub fn is_cached_safe_string(s: &str) -> bool {
 
 pub fn cache_safe_string(s: &str) -> bool {
     if let Ok(mut cache) = SAFE_STRING_CACHE.lock() {
-        return cache.insert(s.to_string());
+        cache.put(s.to_string(), ());
+        return true;
     }
     false
 }

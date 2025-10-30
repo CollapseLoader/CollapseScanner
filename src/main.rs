@@ -22,41 +22,57 @@ use crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions};
 
 #[derive(Parser)]
 #[clap(
+    name = "CollapseScanner",
     author,
     version,
-    about = "CollapseScanner - Advanced JAR/class file analysis and reverse engineering tool"
+    about = "Advanced JAR/class file analysis and reverse engineering tool",
+    long_about = "CollapseScanner is a powerful static analysis tool designed for security researchers, \
+                  malware analysts, and developers to analyze Java JAR files and class files. It detects \
+                  suspicious patterns, network communications, cryptographic operations, and obfuscation \
+                  techniques that may indicate malicious behavior or security vulnerabilities."
 )]
 struct Args {
+    /// Target path to scan (file or directory). If not provided, scans current directory.
     #[clap(value_parser)]
     path: Option<String>,
 
+    /// Enable verbose output with detailed information and progress
     #[clap(short, long, action = clap::ArgAction::SetTrue)]
     verbose: bool,
 
+    /// Extract strings from class files to separate text files
     #[clap(long)]
     strings: bool,
 
+    /// Extract all resources from JAR files to the output directory
     #[clap(long)]
     extract: bool,
 
+    /// Output directory for extracted files and JSON reports (default: ./extracted)
     #[clap(long, value_parser)]
     output: Option<String>,
 
+    /// Export scan results to JSON format
     #[clap(long)]
     json: bool,
 
+    /// Detection mode: all (default), network, crypto, malicious, or obfuscation
     #[clap(value_enum, long, default_value = "all")]
     mode: DetectionMode,
 
+    /// Path to file containing keywords to ignore during suspicious pattern detection
     #[clap(long, value_parser)]
     ignore_keywords: Option<PathBuf>,
 
+    /// Exclude files matching these patterns (supports wildcards: *.class, **/test/*)
     #[clap(long, action = clap::ArgAction::Append, value_parser)]
     exclude: Vec<String>,
 
+    /// Only scan files matching these patterns (supports wildcards: *.jar, **/lib/*)
     #[clap(long, action = clap::ArgAction::Append, value_parser)]
     find: Vec<String>,
 
+    /// Number of threads for parallel processing (0 = automatic)
     #[clap(long, value_parser, default_value_t = 0)]
     threads: usize,
 }
@@ -80,24 +96,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "\n{}",
-        "==== CollapseScanner - Enhanced Analysis ===="
+        "╔══════════════════════════════════════════════════════════════════════════════╗"
+            .bright_blue()
+            .bold()
+    );
+    println!(
+        "{}",
+        concat!(
+            "║                           CollapseScanner v",
+            env!("CARGO_PKG_VERSION"),
+            "                             ║"
+        )
+        .bright_blue()
+        .bold()
+    );
+    println!(
+        "{}",
+        "║                      Advanced JAR/Class Analysis Tool                        ║"
+            .bright_blue()
+            .bold()
+    );
+    println!(
+        "{}",
+        "╚══════════════════════════════════════════════════════════════════════════════╝"
             .bright_blue()
             .bold()
     );
 
-    if options.extract_resources || options.extract_strings || options.export_json {
-        if let Err(e) = fs::create_dir_all(&options.output_dir) {
-            eprintln!(
-                "{} Failed to create output directory {}: {}",
-                "❌".red(),
-                options.output_dir.display(),
-                e
-            );
-            return Err(Box::new(e));
-        }
-    }
-
     if args.threads > 0 {
+        if args.threads > 1024 {
+            eprintln!(
+                "{} Warning: Thread count {} is very high. Consider using fewer threads (recommended: 1-64).",
+                "⚠️".yellow(),
+                args.threads
+            );
+        }
         rayon::ThreadPoolBuilder::new()
             .num_threads(args.threads)
             .build_global()
@@ -130,45 +163,104 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path_arg = args.path.unwrap_or_else(|| ".".to_string());
     let path = PathBuf::from(&path_arg);
     if !path.exists() {
-        eprintln!("{} Path does not exist: {}", "❌".red(), path.display());
+        eprintln!(
+            "{} Error: Target path does not exist: {}",
+            "❌".red().bold(),
+            path.display()
+        );
+        eprintln!(
+            "{} Hint: Check the path spelling and ensure the file/directory exists.",
+            "💡".cyan()
+        );
         std::process::exit(1);
     }
+
+    // Validate output directory if extraction or JSON export is enabled
+    if (options.extract_resources || options.extract_strings || options.export_json)
+        && !options.output_dir.exists()
+    {
+        if let Err(e) = fs::create_dir_all(&options.output_dir) {
+            eprintln!(
+                "{} Error: Failed to create output directory {}: {}",
+                "❌".red().bold(),
+                options.output_dir.display(),
+                e
+            );
+            std::process::exit(1);
+        }
+    }
     println!(
-        "{} Target: {}",
-        "🎯".green(),
-        path.display().to_string().bright_white()
+        "\n{} {}",
+        "🎯".green().bold(),
+        "Target:".bright_white().bold()
+    );
+    println!("   {}", path.display().to_string().bright_white());
+
+    println!(
+        "\n{} {}",
+        "🔧".yellow().bold(),
+        "Detection Mode:".bright_white().bold()
     );
     println!(
-        "{} Mode: {}",
-        "🔧".yellow(),
-        format!("{:?}", args.mode).bright_white()
+        "   {} ({})",
+        format!("{:?}", args.mode).bright_white(),
+        match args.mode {
+            DetectionMode::All => "Comprehensive analysis of all patterns",
+            DetectionMode::Network => "Network-related patterns only",
+            DetectionMode::Crypto => "Cryptographic patterns only",
+            DetectionMode::Malicious => "Malicious code patterns only",
+            DetectionMode::Obfuscation => "Obfuscation detection only",
+        }
+        .dimmed()
     );
+
     if !scanner.options.exclude_patterns.is_empty() {
         println!(
-            "{} Exclude Patterns: {}",
-            "🚫".yellow(),
-            scanner.options.exclude_patterns.join(", ").dimmed()
+            "\n{} {}",
+            "🚫".yellow().bold(),
+            "Exclude Patterns:".bright_white().bold()
         );
+        for pattern in &scanner.options.exclude_patterns {
+            println!("   • {}", pattern.dimmed());
+        }
     }
+
     if !scanner.options.find_patterns.is_empty() {
         println!(
-            "{} Find Patterns: {}",
-            "🔍".yellow(),
-            scanner.options.find_patterns.join(", ").dimmed()
+            "\n{} {}",
+            "🔍".yellow().bold(),
+            "Find Patterns:".bright_white().bold()
         );
+        for pattern in &scanner.options.find_patterns {
+            println!("   • {}", pattern.dimmed());
+        }
     }
 
     if let Some(p) = &scanner.options.ignore_keywords_file {
         println!(
-            "{} Ignoring Keywords: {}",
-            "📄".yellow(),
-            p.display().to_string().dimmed()
+            "\n{} {}",
+            "📄".yellow().bold(),
+            "Ignore Keywords File:".bright_white().bold()
         );
+        println!("   {}", p.display().to_string().dimmed());
     }
+
     if args.verbose {
-        println!("{} Verbose: {}", "🔊".yellow(), "Enabled".bright_white());
+        println!(
+            "\n{} {}",
+            "🔊".yellow().bold(),
+            "Verbose Mode:".bright_white().bold()
+        );
+        println!("   {}", "Enabled".bright_white());
     }
-    println!("{}", "🚀 Starting scan...".bright_green());
+
+    println!(
+        "\n{} {}",
+        "🚀".bright_green().bold(),
+        "Initializing scan...".bright_green()
+    );
+
+    let scan_start_time = std::time::Instant::now();
 
     match scanner.scan_path(&path) {
         Ok(results) => {
@@ -197,23 +289,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     false
                 };
 
+                println!(
+                    "\n{}",
+                    "╔══════════════════════════════════════════════════════════════════════════════╗"
+                        .bright_blue()
+                        .bold()
+                );
+                println!(
+                    "{}",
+                    "║                              SCAN RESULTS                                    ║"
+                        .bright_blue()
+                        .bold()
+                );
+                println!(
+                    "{}",
+                    "╚══════════════════════════════════════════════════════════════════════════════╝"
+                        .bright_blue()
+                        .bold()
+                );
+
                 if !potentially_scannable {
                     println!(
-                        "\n{}",
-                        "🤷 No scannable files (.jar, .class) found in the target path.".yellow()
+                        "\n{} {}",
+                        "🤷".yellow().bold(),
+                        "No scannable files (.jar, .class) found in the target path.".yellow()
                     );
                 } else if !scanner.options.exclude_patterns.is_empty()
                     || !scanner.options.find_patterns.is_empty()
                 {
                     println!(
-                        "\n{}",
-                        "✅ No findings in files matching filter criteria.".green()
+                        "\n{} {}",
+                        "✅".green().bold(),
+                        "No findings in files matching filter criteria.".green()
                     );
                 } else {
-                    println!("\n{}", "✅ No findings matching current criteria.".green());
+                    println!(
+                        "\n{} {}",
+                        "✅".green().bold(),
+                        "No findings matching current criteria.".green()
+                    );
                 }
             } else {
-                println!("\n{}", "⚠️  Findings Report:".bright_yellow().bold());
+                println!(
+                    "\n{}",
+                    "╔══════════════════════════════════════════════════════════════════════════════╗"
+                        .bright_blue()
+                        .bold()
+                );
+                println!(
+                    "{}",
+                    "║                              FINDINGS REPORT                                 ║"
+                        .bright_blue()
+                        .bold()
+                );
+                println!(
+                    "{}",
+                    "╚══════════════════════════════════════════════════════════════════════════════╝"
+                        .bright_blue()
+                        .bold()
+                );
+
                 let mut findings_by_type: HashMap<FindingType, usize> = HashMap::new();
                 let mut total_findings = 0;
 
@@ -229,16 +364,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         };
 
                         println!(
-                            "\n{}",
-                            format!("📄 File: {}{}", result.file_path, class_type).bright_cyan()
+                            "\n{} {}",
+                            "📄".bright_cyan().bold(),
+                            format!("File: {}{}", result.file_path, class_type)
+                                .bright_cyan()
+                                .bold()
                         );
 
                         if scanner.options.verbose {
                             println!(
-                                "   {} Size: {} bytes, Entropy: {:.2}",
+                                "   {} Size: {} bytes | Entropy: {:.2} | Danger Score: {}/10",
                                 "📊".dimmed(),
                                 ri.size,
-                                ri.entropy
+                                ri.entropy,
+                                result.danger_score
                             );
 
                             if result.matches.is_empty() {
@@ -263,15 +402,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let (icon, color) = finding_type.with_emoji();
 
                         println!(
-                            "  {} {}: {}",
+                            "     {} {}: {}",
                             icon.color(color).bold(),
                             finding_type.to_string().color(color).bold(),
                             value.bright_white()
                         );
                     }
+
+                    if scanner.options.verbose && !result.danger_explanation.is_empty() {
+                        println!("     {} Risk Assessment:", "⚠️".yellow().bold());
+                        for explanation in &result.danger_explanation {
+                            println!("        • {}", explanation.dimmed());
+                        }
+                    }
                 }
 
-                println!("\n{}", "==== Scan Summary ====".bright_blue().bold());
+                println!(
+                    "\n{}",
+                    "╔══════════════════════════════════════════════════════════════════════════════╗"
+                        .bright_blue()
+                        .bold()
+                );
+                println!(
+                    "{}",
+                    "║                              SCAN SUMMARY                                    ║"
+                        .bright_blue()
+                        .bold()
+                );
+                println!(
+                    "{}",
+                    "╚══════════════════════════════════════════════════════════════════════════════╝"
+                        .bright_blue()
+                        .bold()
+                );
+
                 if total_findings > 0 {
                     let files_with_findings = sorted_significant_results.len();
                     let total_danger_score: u16 = sorted_significant_results
@@ -292,14 +456,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         _ => "green",
                     };
 
+                    let risk_level = match avg_danger_score {
+                        8..=10 => "HIGH RISK",
+                        5..=7 => "MODERATE RISK",
+                        3..=4 => "LOW RISK",
+                        _ => "MINIMAL RISK",
+                    };
+
+                    let scan_duration = scan_start_time.elapsed();
+                    let total_files_scanned = results.len();
+                    let scan_rate = if scan_duration.as_secs_f64() > 0.0 {
+                        total_files_scanned as f64 / scan_duration.as_secs_f64()
+                    } else {
+                        0.0
+                    };
+
                     println!(
-                        "{} Total Findings: {} | Overall Danger Score: {}",
-                        "📈".yellow(),
+                        "\n{} {}: {} | {}: {} | {}: {} ({}/10)",
+                        "📊".bright_white().bold(),
+                        "Total Findings".bright_white(),
                         total_findings.to_string().bright_white().bold(),
-                        format!("{}/10", avg_danger_score).color(score_color).bold()
+                        "Files with Findings".bright_white(),
+                        files_with_findings.to_string().bright_white(),
+                        "Risk Level".bright_white(),
+                        risk_level.color(score_color).bold(),
+                        avg_danger_score
                     );
 
-                    println!("{}", "🔍 Findings".yellow().bold());
+                    println!(
+                        "{} {}: {:.2}s | {}: {} | {}: {:.1} files/sec",
+                        "⏱️".bright_white().bold(),
+                        "Scan Time".bright_white(),
+                        scan_duration.as_secs_f64(),
+                        "Total Files Scanned".bright_white(),
+                        total_files_scanned.to_string().bright_white(),
+                        "Processing Rate".bright_white(),
+                        scan_rate
+                    );
+
+                    println!(
+                        "\n{} {}",
+                        "🔍".yellow().bold(),
+                        "Findings Breakdown:".yellow().bold()
+                    );
+
                     let mut all_findings: HashMap<FindingType, std::collections::HashSet<String>> =
                         HashMap::new();
 
@@ -316,32 +516,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let (icon, color) = finding_type.with_emoji();
 
                         println!(
-                            "  {} {} ({})",
+                            "\n  {} {} ({})",
                             icon.color(color).bold(),
                             finding_type.to_string().color(color).bold(),
                             values.len().to_string().bright_white()
                         );
 
-                        for value in values {
-                            println!("    - {}", value.bright_white());
+                        let mut sorted_values: Vec<&String> = values.iter().collect();
+                        sorted_values.sort();
+
+                        for (i, value) in sorted_values.iter().enumerate() {
+                            if i < 5 {
+                                println!("    • {}", value.bright_white());
+                            } else if i == 5 {
+                                println!(
+                                    "    • ... and {} more",
+                                    (values.len() - 5).to_string().dimmed()
+                                );
+                                break;
+                            }
                         }
                     }
                 } else {
+                    let scan_duration = scan_start_time.elapsed();
+                    let total_files_scanned = results.len();
+                    let scan_rate = if scan_duration.as_secs_f64() > 0.0 {
+                        total_files_scanned as f64 / scan_duration.as_secs_f64()
+                    } else {
+                        0.0
+                    };
+
                     println!(
-                        "{}",
-                        "✅ No specific findings detected based on current criteria.".green()
+                        "\n{} {}",
+                        "✅".green().bold(),
+                        "No specific findings detected based on current criteria.".green()
+                    );
+
+                    println!(
+                        "{} {}: {:.2}s | {}: {} | {}: {:.1} files/sec",
+                        "⏱️".bright_white().bold(),
+                        "Scan Time".bright_white(),
+                        scan_duration.as_secs_f64(),
+                        "Total Files Scanned".bright_white(),
+                        total_files_scanned.to_string().bright_white(),
+                        "Processing Rate".bright_white(),
+                        scan_rate
                     );
                 }
             }
 
             let found_custom_jvm = *scanner.found_custom_jvm_indicator.lock().unwrap();
             if found_custom_jvm {
-                println!("{}",
-                     format!( "{} {}",
-                             "👻".cyan().bold(),
-                              "Warning: Files starting with unusual magic bytes were detected. These likely require a custom JVM or ClassLoader to execute correctly."
-                     ).yellow()
-                 );
+                println!(
+                    "\n{} {}",
+                    "👻".cyan().bold(),
+                    "Custom JVM Warning:".yellow().bold()
+                );
+                println!(
+                    "   {}",
+                    "Files with unusual magic bytes detected. These may require custom JVM or ClassLoader.".yellow()
+                );
             }
 
             if scanner.options.export_json {
@@ -365,9 +599,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 e
                             );
                         } else {
+                            println!("\n{} {}", "💾".green().bold(), "Export Complete:".green());
                             println!(
-                                "\n{} Detailed scan results saved to: {}",
-                                "💾".green(),
+                                "   JSON results saved to: {}",
                                 json_output_path.display().to_string().bright_white()
                             );
                         }
@@ -382,8 +616,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if scanner.options.extract_resources {
                 println!(
-                    "{} Resources extracted to: {}",
-                    "📦".green(),
+                    "\n{} {}",
+                    "📦".green().bold(),
+                    "Extraction Complete:".green()
+                );
+                println!(
+                    "   Resources extracted to: {}",
                     scanner
                         .options
                         .output_dir
@@ -394,8 +632,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if scanner.options.extract_strings {
                 println!(
-                    "{} Strings extracted to: {}",
-                    "🔤".green(),
+                    "\n{} {}",
+                    "🔤".green().bold(),
+                    "Extraction Complete:".green()
+                );
+                println!(
+                    "   Strings extracted to: {}",
                     scanner
                         .options
                         .output_dir
@@ -407,6 +649,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("\n{} {}", "❌ Error during scan:".bright_red().bold(), e);
+            if options.verbose {
+                eprintln!(
+                    "{} Debug info: This error occurred while processing the target path.",
+                    "🔍".dimmed()
+                );
+                eprintln!("{} Check file permissions, disk space, and ensure JAR/class files are not corrupted.", "💡".cyan());
+            }
             std::process::exit(1);
         }
     }

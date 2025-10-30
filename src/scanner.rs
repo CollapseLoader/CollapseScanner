@@ -3,7 +3,7 @@ use crate::database::GOOD_LINKS;
 use crate::detection::{
     cache_safe_string, calculate_detection_hash, is_cached_safe_string, CRYPTO_REGEX,
     ENTROPY_THRESHOLD, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX, NAME_LENGTH_THRESHOLD,
-    SUSPICIOUS_DOMAINS, URL_REGEX,
+    SUSSY_DOMAINS, URL_REGEX,
 };
 use crate::errors::ScanError;
 use crate::parser::parse_class_structure;
@@ -96,7 +96,7 @@ impl CollapseScanner {
 
         Ok(CollapseScanner {
             good_links,
-            suspicious_domains: SUSPICIOUS_DOMAINS.clone(),
+            suspicious_domains: SUSSY_DOMAINS.clone(),
             ignored_suspicious_keywords,
             ignored_crypto_keywords,
             options,

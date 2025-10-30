@@ -11,10 +11,10 @@ lazy_static::lazy_static! {
     };
 
     pub static ref SAFE_STRING_BLOOM: std::sync::Mutex<bloomfilter::Bloom<String>> = {
-        std::sync::Mutex::new(bloomfilter::Bloom::new_for_fp_rate(100000, 0.01))
+        std::sync::Mutex::new(bloomfilter::Bloom::new_for_fp_rate(100000, 0.01).unwrap())
     };
 
-    pub static ref SUSPICIOUS_DOMAINS: HashSet<String> = {
+    pub static ref SUSSY_DOMAINS: HashSet<String> = {
         [
             "discord.com",
             "discordapp.com",

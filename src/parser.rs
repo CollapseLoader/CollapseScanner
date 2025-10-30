@@ -15,12 +15,12 @@ fn check_bounds(
 ) -> Result<(), ScanError> {
     let current_pos = cursor.position();
     let data_len = cursor.get_ref().len() as u64;
-    if current_pos.saturating_add(needed) > data_len {
+    if current_pos + needed > data_len {
         Err(ScanError::ClassParseError {
             path: path.to_string(),
             msg: format!(
                 "EOF Error: Needed {} bytes for '{}' at pos {}, but only {} bytes remain (total len {})",
-                needed, context, current_pos, data_len.saturating_sub(current_pos), data_len
+                needed, context, current_pos, data_len - current_pos, data_len
             ),
         })
     } else {
@@ -56,7 +56,7 @@ fn parse_constant_pool(
                 check_bounds(cursor, 2, file_path_str, "UTF8 length")?;
                 let length = cursor.read_u16::<BigEndian>()? as usize;
                 let current_pos = cursor.position() as usize;
-                let end_pos = current_pos.saturating_add(length);
+                let end_pos = current_pos + length;
                 let data = cursor.get_ref();
 
                 if end_pos > data.len() {
@@ -205,20 +205,11 @@ fn skip_attributes(
     cursor: &mut Cursor<&[u8]>,
     attributes_count: u16,
     file_path_str: &str,
-    member_type: &str,
-    member_index: u16,
+    _member_type: &str,
+    _member_index: u16,
 ) -> Result<(), ScanError> {
-    for attr_index in 0..attributes_count {
-        let context_base = format!(
-            "attribute {}/{} for {} {}",
-            attr_index, attributes_count, member_type, member_index
-        );
-        check_bounds(
-            cursor,
-            6,
-            file_path_str,
-            &format!("{} header", context_base),
-        )?;
+    for _attr_index in 0..attributes_count {
+        check_bounds(cursor, 6, file_path_str, "attribute header")?;
         let _attribute_name_index = cursor.read_u16::<BigEndian>()?;
         let attribute_length = cursor.read_u32::<BigEndian>()? as u64;
 
@@ -226,7 +217,7 @@ fn skip_attributes(
             cursor,
             attribute_length,
             file_path_str,
-            &format!("{} data (len {})", context_base, attribute_length),
+            &format!("attribute data (len {})", attribute_length),
         )?;
 
         cursor.seek(SeekFrom::Current(attribute_length as i64))?;
@@ -498,7 +489,7 @@ pub fn parse_class_structure(
             _ => {}
         }
     }
-    let strings = string_set.into_iter().collect();
+    let strings: Vec<String> = string_set.into_iter().collect();
 
     Ok(ClassDetails {
         class_name,

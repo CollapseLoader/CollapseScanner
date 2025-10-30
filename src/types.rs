@@ -110,6 +110,8 @@ pub struct ScannerOptions {
     pub ignore_keywords_file: Option<PathBuf>,
     pub exclude_patterns: Vec<String>,
     pub find_patterns: Vec<String>,
+    pub max_file_size: Option<usize>,
+    pub fast_mode: bool,
 }
 
 impl Default for ScannerOptions {
@@ -124,6 +126,8 @@ impl Default for ScannerOptions {
             ignore_keywords_file: None,
             exclude_patterns: Vec::new(),
             find_patterns: Vec::new(),
+            max_file_size: None,
+            fast_mode: false,
         }
     }
 }

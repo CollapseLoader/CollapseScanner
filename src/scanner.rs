@@ -1,8 +1,9 @@
 use crate::config::SYSTEM_CONFIG;
 use crate::database::GOOD_LINKS;
 use crate::detection::{
-    cache_safe_string, calculate_detection_hash, is_cached_safe_string, ENTROPY_THRESHOLD,
-    NAME_LENGTH_THRESHOLD, SUSPICIOUS_DOMAINS,
+    cache_safe_string, calculate_detection_hash, is_cached_safe_string, CRYPTO_REGEX,
+    ENTROPY_THRESHOLD, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX, NAME_LENGTH_THRESHOLD,
+    SUSPICIOUS_DOMAINS, URL_REGEX,
 };
 use crate::errors::ScanError;
 use crate::parser::parse_class_structure;
@@ -14,13 +15,14 @@ use crate::utils::{calculate_entropy, extract_domain, get_simple_name, truncate_
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use lru::LruCache;
-use regex::Regex;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use walkdir::WalkDir;
@@ -29,12 +31,7 @@ use zip::ZipArchive;
 
 pub struct CollapseScanner {
     good_links: HashSet<String>,
-    ip_regex: Regex,
-    ipv6_regex: Regex,
-    url_regex: Regex,
     suspicious_domains: HashSet<String>,
-    crypto_regex: Regex,
-    malicious_pattern_regex: Regex,
     ignored_suspicious_keywords: HashSet<String>,
     ignored_crypto_keywords: HashSet<String>,
     pub options: ScannerOptions,
@@ -99,12 +96,7 @@ impl CollapseScanner {
 
         Ok(CollapseScanner {
             good_links,
-            ip_regex: Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap(),
-            ipv6_regex: Regex::new(r"(?i)\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b").unwrap(),
-            url_regex: Regex::new(r#"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»""'']))"#).unwrap(),
             suspicious_domains: SUSPICIOUS_DOMAINS.clone(),
-            crypto_regex: Regex::new(r"(?i)\b(aes|des|rsa|md5|sha[1-9]*-?\d*|blowfish|twofish|pgp|gpg|cipher|keystore|keygenerator|secretkey|password|encrypt|decrypt|hash|salt|ivParameterSpec|SecureRandom)\b").unwrap(),
-            malicious_pattern_regex: Regex::new(r"(?i)\b(backdoor|exploit|payload|shellcode|bypass|rootkit|keylog|rat\b|trojan|malware|spyware|meterpreter|cobaltstrike|powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|download|upload|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|unsafe|jndi|ldap|rmi|base64|decode)\b").unwrap(),
             ignored_suspicious_keywords,
             ignored_crypto_keywords,
             options,
@@ -160,6 +152,23 @@ impl CollapseScanner {
     }
 
     pub fn scan_path(&self, path: &Path) -> Result<Vec<ScanResult>, ScanError> {
+        if let Some(max_size) = self.options.max_file_size {
+            if let Ok(metadata) = path.metadata() {
+                if metadata.len() > max_size as u64 {
+                    if self.options.verbose {
+                        println!(
+                            "{} Skipping large file: {} ({} MB > {} MB)",
+                            "🚫".dimmed(),
+                            path.display(),
+                            metadata.len() / (1024 * 1024),
+                            max_size / (1024 * 1024)
+                        );
+                    }
+                    return Ok(Vec::new());
+                }
+            }
+        }
+
         if path.is_dir() {
             self.scan_directory(path)
         } else if path.extension().map_or(false, |ext| ext == "jar") {
@@ -284,26 +293,36 @@ impl CollapseScanner {
             .unwrap()
             .progress_chars("█▉▊▋▌▍▎▏  ");
 
-        let progress = ProgressBar::new(scannable_files.len() as u64);
-        progress.set_style(progress_style);
-        progress.set_message("Analyzing files...");
+        let progress = Arc::new(Mutex::new(ProgressBar::new(scannable_files.len() as u64)));
+        progress.lock().unwrap().set_style(progress_style);
+        progress.lock().unwrap().set_message("Analyzing files...");
+
+        let processed_count = Arc::new(AtomicUsize::new(0));
 
         let scan_results: Vec<_> = scannable_files
-            .iter()
+            .par_iter()
+            .with_max_len(100)
             .map(|path| {
-                let result = if self.options.verbose {
-                    progress.set_message(format!("Scanning: {}", path.display()));
-                    self.scan_path(path)
-                } else {
-                    self.scan_path(path)
-                };
+                let result = self.scan_path(path);
 
-                progress.inc(1);
+                let count = processed_count.fetch_add(1, Ordering::Relaxed);
+                if count % 10 == 0 {
+                    let progress_guard = progress.lock().unwrap();
+                    if self.options.verbose {
+                        progress_guard.set_message(format!("Scanning: {}", path.display()));
+                    }
+                    progress_guard.inc(10);
+                    drop(progress_guard);
+                }
+
                 result
             })
             .collect();
 
-        progress.finish_with_message(format!("Finished scanning {} files", scannable_files.len()));
+        progress
+            .lock()
+            .unwrap()
+            .finish_with_message(format!("Finished scanning {} files", scannable_files.len()));
 
         let mut error_count = 0;
         let mut success_count = 0;
@@ -358,12 +377,14 @@ impl CollapseScanner {
         }
 
         let buffer_size = SYSTEM_CONFIG.buffer_size;
-        let mut reusable_buffer = Vec::with_capacity(buffer_size);
+        let avg_entry_size = total_files.saturating_sub(1).max(1) as usize * 1024;
+        let optimal_buffer = (avg_entry_size * 2).min(buffer_size);
+        let mut reusable_buffer = Vec::with_capacity(optimal_buffer);
 
         let pb_template = format!("{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} ({{percent:>3}}%) Processing: {{msg}}", "🔍".green());
 
-        let progress_bar = ProgressBar::new(total_files as u64);
-        progress_bar.set_style(
+        let progress_bar = Arc::new(Mutex::new(ProgressBar::new(total_files as u64)));
+        progress_bar.lock().unwrap().set_style(
             ProgressStyle::default_bar()
                 .template(&pb_template)?
                 .progress_chars("█▉▊▋▌▍▎▏  "),
@@ -380,7 +401,7 @@ impl CollapseScanner {
                         jar_path.display(),
                         e
                     );
-                    progress_bar.inc(1);
+                    progress_bar.lock().unwrap().inc(1);
                     continue;
                 }
             };
@@ -390,11 +411,13 @@ impl CollapseScanner {
                 None => String::from_utf8_lossy(file.name_raw()).replace('\\', "/"),
             };
 
-            progress_bar.set_message(original_entry_name.clone());
+            let pb_guard = progress_bar.lock().unwrap();
+            pb_guard.set_message(original_entry_name.clone());
+            drop(pb_guard);
 
             if !self.should_scan(&original_entry_name) {
                 skipped_count += 1;
-                progress_bar.inc(1);
+                progress_bar.lock().unwrap().inc(1);
                 continue;
             }
 
@@ -412,7 +435,7 @@ impl CollapseScanner {
                     original_entry_name,
                     e
                 );
-                progress_bar.inc(1);
+                progress_bar.lock().unwrap().inc(1);
                 continue;
             }
 
@@ -459,10 +482,10 @@ impl CollapseScanner {
                 }
             }
 
-            progress_bar.inc(1);
+            progress_bar.lock().unwrap().inc(1);
         }
 
-        progress_bar.finish_with_message(format!(
+        progress_bar.lock().unwrap().finish_with_message(format!(
             "Finished processing {} files ({} skipped, {} analyzed)",
             total_files,
             skipped_count,
@@ -668,51 +691,32 @@ impl CollapseScanner {
         match self.options.mode {
             DetectionMode::All => {
                 for string in &strings_to_scan {
-                    let findings_before = findings.len();
-
-                    self.check_network_patterns(string, &mut findings);
-
-                    if findings_before == findings.len() {
-                        self.check_crypto_patterns(string, &mut findings);
-                    }
-                    if findings_before == findings.len() {
-                        self.check_malicious_patterns(string, &mut findings);
-                    }
-                    if findings_before == findings.len() {
-                        self.check_suspicious_url_patterns(string, &mut findings);
-                    }
-
-                    if findings_before == findings.len() {
+                    if self.check_all_patterns(string, &mut findings) {
                         cache_safe_string(string);
+                    }
+
+                    if self.options.fast_mode && !findings.is_empty() {
+                        break;
                     }
                 }
             }
             DetectionMode::Network => {
                 for string in &strings_to_scan {
-                    let findings_before = findings.len();
-                    self.check_network_patterns(string, &mut findings);
-                    if findings_before == findings.len() {
-                        self.check_suspicious_url_patterns(string, &mut findings);
-                    }
-                    if findings_before == findings.len() {
+                    if self.check_network_patterns_combined(string, &mut findings) {
                         cache_safe_string(string);
                     }
                 }
             }
             DetectionMode::Crypto => {
                 for string in &strings_to_scan {
-                    let findings_before = findings.len();
-                    self.check_crypto_patterns(string, &mut findings);
-                    if findings_before == findings.len() {
+                    if self.check_crypto_patterns_only(string, &mut findings) {
                         cache_safe_string(string);
                     }
                 }
             }
             DetectionMode::Malicious => {
                 for string in &strings_to_scan {
-                    let findings_before = findings.len();
-                    self.check_malicious_patterns(string, &mut findings);
-                    if findings_before == findings.len() {
+                    if self.check_malicious_patterns_only(string, &mut findings) {
                         cache_safe_string(string);
                     }
                 }
@@ -752,7 +756,7 @@ impl CollapseScanner {
     }
 
     fn check_network_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if let Some(cap) = self.ip_regex.captures(string) {
+        if let Some(cap) = IP_REGEX.captures(string) {
             findings.push((
                 FindingType::IpAddress,
                 cap.get(0).unwrap().as_str().to_string(),
@@ -760,7 +764,7 @@ impl CollapseScanner {
             return;
         }
 
-        if let Some(cap) = self.ipv6_regex.captures(string) {
+        if let Some(cap) = IPV6_REGEX.captures(string) {
             findings.push((
                 FindingType::IpV6Address,
                 cap.get(0).unwrap().as_str().to_string(),
@@ -768,7 +772,7 @@ impl CollapseScanner {
             return;
         }
 
-        if let Some(cap) = self.url_regex.captures(string) {
+        if let Some(cap) = URL_REGEX.captures(string) {
             let url_match = cap.get(0).unwrap().as_str();
             let domain = extract_domain(url_match);
 
@@ -786,7 +790,7 @@ impl CollapseScanner {
         string: &str,
         findings: &mut Vec<(FindingType, String)>,
     ) {
-        for cap in self.url_regex.captures_iter(string) {
+        for cap in URL_REGEX.captures_iter(string) {
             if let Some(url_match) = cap.get(0) {
                 let url_str = url_match.as_str();
                 let domain = extract_domain(url_str);
@@ -818,7 +822,7 @@ impl CollapseScanner {
     }
 
     fn check_crypto_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if let Some(cap) = self.crypto_regex.captures(string) {
+        if let Some(cap) = CRYPTO_REGEX.captures(string) {
             let keyword = cap.get(0).unwrap().as_str();
             let keyword_lower = keyword.to_lowercase();
             if !self.ignored_crypto_keywords.contains(&keyword_lower) {
@@ -831,7 +835,7 @@ impl CollapseScanner {
     }
 
     fn check_malicious_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if let Some(cap) = self.malicious_pattern_regex.captures(string) {
+        if let Some(cap) = MALICIOUS_PATTERN_REGEX.captures(string) {
             let keyword = cap.get(0).unwrap().as_str();
             let keyword_lower = keyword.to_lowercase();
             if !self.ignored_suspicious_keywords.contains(&keyword_lower) {
@@ -841,6 +845,60 @@ impl CollapseScanner {
                 ));
             }
         }
+    }
+
+    // Combined pattern checking methods for better performance
+    fn check_all_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) -> bool {
+        let initial_len = findings.len();
+
+        // Check in order of likelihood/cost
+        if IP_REGEX.is_match(string) {
+            self.check_network_patterns(string, findings);
+        } else if IPV6_REGEX.is_match(string) {
+            self.check_network_patterns(string, findings);
+        } else if URL_REGEX.is_match(string) {
+            self.check_network_patterns(string, findings);
+            self.check_suspicious_url_patterns(string, findings);
+        } else if MALICIOUS_PATTERN_REGEX.is_match(string) {
+            self.check_malicious_patterns(string, findings);
+        } else if CRYPTO_REGEX.is_match(string) {
+            self.check_crypto_patterns(string, findings);
+        }
+
+        findings.len() == initial_len // Returns true if no findings (safe string)
+    }
+
+    fn check_network_patterns_combined(
+        &self,
+        string: &str,
+        findings: &mut Vec<(FindingType, String)>,
+    ) -> bool {
+        let initial_len = findings.len();
+        self.check_network_patterns(string, findings);
+        if findings.len() == initial_len {
+            self.check_suspicious_url_patterns(string, findings);
+        }
+        findings.len() == initial_len
+    }
+
+    fn check_crypto_patterns_only(
+        &self,
+        string: &str,
+        findings: &mut Vec<(FindingType, String)>,
+    ) -> bool {
+        let initial_len = findings.len();
+        self.check_crypto_patterns(string, findings);
+        findings.len() == initial_len
+    }
+
+    fn check_malicious_patterns_only(
+        &self,
+        string: &str,
+        findings: &mut Vec<(FindingType, String)>,
+    ) -> bool {
+        let initial_len = findings.len();
+        self.check_malicious_patterns(string, findings);
+        findings.len() == initial_len
     }
 
     fn check_name_obfuscation(

@@ -1,3 +1,4 @@
+use regex::Regex;
 use std::collections::HashSet;
 
 pub const NAME_LENGTH_THRESHOLD: usize = 100;
@@ -7,6 +8,10 @@ lazy_static::lazy_static! {
     pub static ref SAFE_STRING_CACHE: std::sync::Mutex<lru::LruCache<String, ()>> = {
         let capacity = crate::config::SYSTEM_CONFIG.safe_string_cache_capacity;
         std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(capacity).unwrap()))
+    };
+
+    pub static ref SAFE_STRING_BLOOM: std::sync::Mutex<bloomfilter::Bloom<String>> = {
+        std::sync::Mutex::new(bloomfilter::Bloom::new_for_fp_rate(100000, 0.01))
     };
 
     pub static ref SUSPICIOUS_DOMAINS: HashSet<String> = {
@@ -19,9 +24,30 @@ lazy_static::lazy_static! {
         .map(|&s| s.to_lowercase())
         .collect()
     };
+
+    pub static ref IP_REGEX: Regex =
+        Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap();
+
+    pub static ref IPV6_REGEX: Regex =
+        Regex::new(r"(?i)\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b").unwrap();
+
+    pub static ref URL_REGEX: Regex =
+        Regex::new(r#"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»""'']))"#).unwrap();
+
+    pub static ref CRYPTO_REGEX: Regex =
+        Regex::new(r"(?i)\b(aes|des|rsa|md5|sha[1-9]*-?\d*|blowfish|twofish|pgp|gpg|cipher|keystore|keygenerator|secretkey|password|encrypt|decrypt|hash|salt|ivParameterSpec|SecureRandom)\b").unwrap();
+
+    pub static ref MALICIOUS_PATTERN_REGEX: Regex =
+        Regex::new(r"(?i)\b(backdoor|exploit|payload|shellcode|bypass|rootkit|keylog|rat\b|trojan|malware|spyware|meterpreter|cobaltstrike|powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|download|upload|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|unsafe|jndi|ldap|rmi|base64|decode)\b").unwrap();
 }
 
 pub fn is_cached_safe_string(s: &str) -> bool {
+    if let Ok(bloom) = SAFE_STRING_BLOOM.lock() {
+        if !bloom.check(&s.to_string()) {
+            return false;
+        }
+    }
+
     if let Ok(cache) = SAFE_STRING_CACHE.lock() {
         return cache.contains(s);
     }
@@ -29,8 +55,14 @@ pub fn is_cached_safe_string(s: &str) -> bool {
 }
 
 pub fn cache_safe_string(s: &str) -> bool {
+    let string_owned = s.to_string();
+
+    if let Ok(mut bloom) = SAFE_STRING_BLOOM.lock() {
+        bloom.set(&string_owned);
+    }
+
     if let Ok(mut cache) = SAFE_STRING_CACHE.lock() {
-        cache.put(s.to_string(), ());
+        cache.put(string_owned, ());
         return true;
     }
     false

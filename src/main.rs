@@ -75,6 +75,14 @@ struct Args {
     /// Number of threads for parallel processing (0 = automatic)
     #[clap(long, value_parser, default_value_t = 0)]
     threads: usize,
+
+    /// Skip files larger than this size in MB
+    #[clap(long, value_parser)]
+    max_file_size: Option<usize>,
+
+    /// Fast mode: exit on first finding per file (faster but less comprehensive)
+    #[clap(long)]
+    fast_mode: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -92,6 +100,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ignore_keywords_file: args.ignore_keywords,
         exclude_patterns: args.exclude,
         find_patterns: args.find,
+        max_file_size: args.max_file_size.map(|mb| mb * 1024 * 1024),
+        fast_mode: args.fast_mode,
     };
 
     println!(

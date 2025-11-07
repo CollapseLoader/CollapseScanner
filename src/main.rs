@@ -8,18 +8,32 @@ mod parser;
 mod scanner;
 mod types;
 mod utils;
+#[cfg(all(feature = "cli", not(feature = "gui")))]
+use colored::Colorize;
 
+#[cfg(feature = "gui")]
+mod gui;
+
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 use clap::Parser;
-use colored::*;
+
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 use std::collections::HashMap;
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 use std::fs::{self, File};
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 use std::io::{self, Write};
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 use std::path::{Path, PathBuf};
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 use walkdir::WalkDir;
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 use crate::scanner::CollapseScanner;
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 use crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions};
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 #[derive(Parser)]
 #[clap(
     name = "CollapseScanner",
@@ -68,13 +82,11 @@ struct Args {
     #[clap(long, value_parser)]
     max_file_size: Option<usize>,
 
-    #[clap(long)]
-    fast_mode: bool,
-
     #[clap(long, action = clap::ArgAction::SetTrue)]
     show: bool,
 }
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn print_banner() {
     println!(
         "\n{}",
@@ -106,6 +118,7 @@ fn print_banner() {
     );
 }
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn create_scanner_options(args: &Args) -> ScannerOptions {
     ScannerOptions {
         extract_strings: args.strings,
@@ -121,11 +134,11 @@ fn create_scanner_options(args: &Args) -> ScannerOptions {
         ignore_keywords_file: args.ignore_keywords.clone(),
         exclude_patterns: args.exclude.clone(),
         find_patterns: args.find.clone(),
-        max_file_size: args.max_file_size.map(|mb| mb * 1024 * 1024),
-        fast_mode: args.fast_mode,
+        max_file_size: args.max_file_size.map(|mb| mb * 1024 * 1024)
     }
 }
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     if args.threads > 0 {
         if args.threads > 1024 {
@@ -155,6 +168,7 @@ fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn validate_and_prepare_path(
     args: &Args,
     options: &ScannerOptions,
@@ -199,6 +213,7 @@ fn validate_and_prepare_path(
     Ok(path)
 }
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn print_scan_configuration(path: &Path, args: &Args, scanner: &CollapseScanner) {
     println!(
         "\n{} {}",
@@ -227,6 +242,7 @@ fn print_scan_configuration(path: &Path, args: &Args, scanner: &CollapseScanner)
     print_optional_configurations(scanner, args);
 }
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn print_optional_configurations(scanner: &CollapseScanner, args: &Args) {
     if !scanner.options.exclude_patterns.is_empty() {
         println!(
@@ -269,9 +285,7 @@ fn print_optional_configurations(scanner: &CollapseScanner, args: &Args) {
     }
 }
 
-// Calculate the average danger score (1-10), choose a color name and a risk level string
-// for a set of significant scan results. This extracts the previous inline logic so it's
-// easier to read and reason about.
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn calculate_scan_score(
     sorted_significant_results: &[&ScanResult],
 ) -> (u8, &'static str, &'static str) {
@@ -279,7 +293,6 @@ fn calculate_scan_score(
         return (1, "green", "MINIMAL RISK");
     }
 
-    // Weighted average gives extra importance to very high scores (>=8).
     let mut weighted_sum: u32 = 0;
     let mut weight_total: u32 = 0;
     let mut max_danger_score: u8 = 0;
@@ -330,7 +343,19 @@ fn calculate_scan_score(
     (avg_danger_score, score_color, risk_level)
 }
 
+#[cfg(feature = "gui")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    gui::app::run_gui()?;
+    Ok(())
+}
+
+#[cfg(all(not(feature = "gui"), feature = "cli"))]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    run_cli()
+}
+
+#[cfg(all(feature = "cli", not(feature = "gui")))]
+fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let options = create_scanner_options(&args);
 
@@ -450,12 +475,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .bold()
                     );
 
-                    // Build a map of findings grouped by type so we can print the
-                    // FINDINGS REPORT sorted by finding type instead of by file.
-                    let mut findings_by_type: HashMap<
-                        FindingType,
-                        Vec<(String /* file_path */, String /* value */)>,
-                    > = HashMap::new();
+                    let mut findings_by_type: HashMap<FindingType, Vec<(String, String)>> =
+                        HashMap::new();
 
                     for result in &sorted_significant_results {
                         for (finding_type, value) in &result.matches {
@@ -466,7 +487,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    // Sort the finding types by their display name for stable output
                     let mut finding_types: Vec<FindingType> =
                         findings_by_type.keys().cloned().collect();
                     finding_types.sort_by_key(|t| t.to_string());
@@ -482,7 +502,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             entries.len().to_string().bright_white()
                         );
 
-                        // Sort entries by file path then value for deterministic output
                         let mut sorted_entries = entries.clone();
                         sorted_entries.sort_by(|a, b| {
                             let file_cmp = a.0.cmp(&b.0);

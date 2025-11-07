@@ -15,7 +15,7 @@ use crate::utils::{calculate_entropy, extract_domain, get_simple_name, truncate_
 
 type ResultCache = Arc<Mutex<LruCache<u64, Vec<(FindingType, String)>>>>;
 
-use colored::*;
+use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use lru::LruCache;
 use rayon::prelude::*;
@@ -296,6 +296,15 @@ impl CollapseScanner {
         progress.lock().unwrap().set_style(progress_style);
         progress.lock().unwrap().set_message("Analyzing files...");
 
+        // If GUI supplied a shared progress Arc, initialize it as well
+        if let Some(ref prog_arc) = self.options.progress {
+            if let Ok(mut gp) = prog_arc.lock() {
+                gp.total = scannable_files.len();
+                gp.current = 0;
+                gp.message = "Analyzing files...".to_string();
+            }
+        }
+
         let processed_count = Arc::new(AtomicUsize::new(0));
 
         let scan_results: Vec<_> = scannable_files
@@ -305,6 +314,14 @@ impl CollapseScanner {
                 let result = self.scan_path(path);
 
                 let count = processed_count.fetch_add(1, Ordering::Relaxed);
+                // update shared progress if provided
+                if let Some(ref prog_arc) = self.options.progress {
+                    if let Ok(mut gp) = prog_arc.lock() {
+                        gp.current = count + 1;
+                        gp.total = scannable_files.len();
+                        gp.message = format!("Scanning: {}", path.display());
+                    }
+                }
                 if count.is_multiple_of(10) {
                     let progress_guard = progress.lock().unwrap();
                     if self.options.verbose {
@@ -444,6 +461,15 @@ impl CollapseScanner {
 
         let processed_count = Arc::new(AtomicUsize::new(0));
 
+        // Initialize shared progress for GUI if present
+        if let Some(ref prog_arc) = self.options.progress {
+            if let Ok(mut gp) = prog_arc.lock() {
+                gp.total = file_data_vec.len();
+                gp.current = 0;
+                gp.message = "Processing JAR entries...".to_string();
+            }
+        }
+
         let scan_results: Vec<_> = file_data_vec
             .par_iter()
             .with_max_len(10)
@@ -483,6 +509,13 @@ impl CollapseScanner {
             skipped_count,
             file_data_vec.len()
         ));
+
+        if let Some(ref prog_arc) = self.options.progress {
+            if let Ok(mut gp) = prog_arc.lock() {
+                gp.current = gp.total;
+                gp.message = format!("Finished processing {} files", file_data_vec.len());
+            }
+        }
 
         if self.options.export_json && !all_resource_info.is_empty() {
             let resources_json_path = self.options.output_dir.join(format!(
@@ -556,6 +589,15 @@ impl CollapseScanner {
         };
 
         let count = processed_count.fetch_add(1, Ordering::Relaxed);
+        // update shared progress if provided
+        if let Some(ref prog_arc) = self.options.progress {
+            if let Ok(mut gp) = prog_arc.lock() {
+                gp.current = count + 1;
+                // total is set earlier
+                gp.message = original_entry_name.to_string();
+            }
+        }
+
         if count % 10 == 0 {
             let pb_guard = progress_bar.lock().unwrap();
             pb_guard.inc(10);
@@ -1073,21 +1115,30 @@ impl CollapseScanner {
 
         let mut explanations = Vec::new();
 
+        let use_emoji = self.options.progress.is_none();
+        let warn_prefix = if use_emoji { "⚠️ " } else { "" };
+        let ok_prefix = if use_emoji { "✅ " } else { "" };
+
         if score >= 8 {
-            explanations.push(
-                "⚠️ HIGH RISK: This file contains multiple high-risk indicators!".to_string(),
-            );
+            explanations.push(format!(
+            "{}HIGH RISK: This file contains multiple high-risk indicators!",
+            warn_prefix
+            ));
         } else if score >= 5 {
-            explanations.push(
-                "⚠️ MODERATE RISK: This file contains several suspicious elements.".to_string(),
-            );
+            explanations.push(format!(
+            "{}MODERATE RISK: This file contains several suspicious elements.",
+            warn_prefix
+            ));
         } else if score >= 3 {
-            explanations.push(
-                "⚠️ LOW RISK: This file contains some potentially concerning elements.".to_string(),
-            );
+            explanations.push(format!(
+            "{}LOW RISK: This file contains some potentially concerning elements.",
+            warn_prefix
+            ));
         } else {
-            explanations
-                .push("✅ MINIMAL RISK: Few or no concerning elements detected.".to_string());
+            explanations.push(format!(
+            "{}MINIMAL RISK: Few or no concerning elements detected.",
+            ok_prefix
+            ));
         }
 
         let mut by_type: HashMap<FindingType, Vec<String>> = HashMap::new();
@@ -1325,10 +1376,6 @@ impl CollapseScanner {
                 for string in strings_to_scan {
                     if self.check_all_patterns(string, findings) {
                         cache_safe_string(string);
-                    }
-
-                    if self.options.fast_mode && !findings.is_empty() {
-                        break;
                     }
                 }
             }

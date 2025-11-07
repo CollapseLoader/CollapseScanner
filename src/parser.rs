@@ -1,7 +1,7 @@
 use crate::errors::ScanError;
 use crate::types::{ClassDetails, ConstantPoolEntry, FieldInfo, MethodInfo};
 use byteorder::{BigEndian, ReadBytesExt};
-use colored::*;
+use colored::Colorize;
 use encoding_rs::UTF_8;
 use std::collections::HashSet;
 use std::io::{Cursor, Seek, SeekFrom};

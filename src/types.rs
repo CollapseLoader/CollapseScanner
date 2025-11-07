@@ -1,6 +1,6 @@
-use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
@@ -10,6 +10,31 @@ pub struct ScanResult {
     pub resource_info: Option<ResourceInfo>,
     pub danger_score: u8,
     pub danger_explanation: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Progress {
+    pub current: usize,
+    pub total: usize,
+    pub message: String,
+}
+
+impl Progress {
+    pub fn new() -> Self {
+        Self {
+            current: 0,
+            total: 0,
+            message: String::from("Ready to scan"),
+        }
+    }
+
+    pub fn percentage(&self) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.current as f32 / self.total as f32) * 100.0
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -39,6 +64,7 @@ impl std::fmt::Display for FindingType {
     }
 }
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 impl FindingType {
     pub fn with_emoji(&self) -> (&'static str, &'static str) {
         match self {
@@ -113,12 +139,24 @@ pub struct ResourceInfo {
     pub is_dead_class_candidate: bool,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum DetectionMode {
     Network,
     Malicious,
     Obfuscation,
     All,
+}
+
+impl std::fmt::Display for DetectionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DetectionMode::Network => write!(f, "Network"),
+            DetectionMode::Malicious => write!(f, "Malicious"),
+            DetectionMode::Obfuscation => write!(f, "Obfuscation"),
+            DetectionMode::All => write!(f, "All"),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -133,7 +171,7 @@ pub struct ScannerOptions {
     pub exclude_patterns: Vec<String>,
     pub find_patterns: Vec<String>,
     pub max_file_size: Option<usize>,
-    pub fast_mode: bool,
+    pub progress: Option<Arc<Mutex<Progress>>>,
 }
 
 impl Default for ScannerOptions {
@@ -149,7 +187,7 @@ impl Default for ScannerOptions {
             exclude_patterns: Vec::new(),
             find_patterns: Vec::new(),
             max_file_size: None,
-            fast_mode: false,
+            progress: None,
         }
     }
 }

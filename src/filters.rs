@@ -16,7 +16,7 @@ lazy_static::lazy_static! {
 \s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»""']))"#).unwrap();
 
     /// Generic malicious / suspicious pattern keywords
-    pub static ref MALICIOUS_PATTERN_REGEX: Regex = Regex::new(r"(?i)\b(payload|powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|jndi|ldap|rmi)\b").unwrap();
+    pub static ref MALICIOUS_PATTERN_REGEX: Regex = Regex::new(r"(?i)\b(powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|ldap|rmi)\b").unwrap();
 
     /// Known "good" links / domains
     pub static ref GOOD_LINKS: Vec<String> = vec![

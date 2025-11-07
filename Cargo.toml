@@ -6,11 +6,20 @@ authors = ["dest4590"]
 default-run = "collapsescanner"
 
 [[bin]]
+name = "collapsescanner"
+path = "src/main.rs"
+required-features = []
+
+[[bin]]
 name = "remapper"
 path = "scripts/remapper.rs"
 
+[features]
+default = ["cli"]
+cli = ["clap", "colored"]
+gui = ["iced", "rfd", "tokio"]
+
 [dependencies]
-colored = "3.0.0"
 regex = "1.12.2"
 zip = "6.0.0"
 indicatif = "0.18.2"
@@ -18,7 +27,6 @@ lazy_static = "1.5.0"
 url = "2.5.7"
 hex = "0.4.3"
 byteorder = "1.5.0"
-clap = { version = "4.5.51", features = ["derive"] }
 walkdir = "2.5.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
@@ -31,6 +39,15 @@ lru = "0.16.2"
 sysinfo = "0.37.2"
 bloomfilter = "3.0"
 ipnet = "2"
+
+# CLI dependencies (optional)
+colored = { version = "3.0.0", optional = true }
+clap = { version = "4.5.51", features = ["derive"], optional = true }
+
+# GUI dependencies (optional)
+iced = { version = "0.13", features = ["tokio"], optional = true }
+rfd = { version = "0.15", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
 
 [profile.release]
 codegen-units = 1

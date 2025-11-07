@@ -66,8 +66,7 @@ fn process_jar(input_path: &str, output_path: &str) -> ZipResult<()> {
         if entry.size() > 1_000_000 && !is_dir {
             let temp_path = temp_dir.path().join(i.to_string());
             {
-                let mut temp_file =
-                    File::create(&temp_path).map_err(zip::result::ZipError::Io)?;
+                let mut temp_file = File::create(&temp_path).map_err(zip::result::ZipError::Io)?;
                 io::copy(&mut entry, &mut BufWriter::new(&mut temp_file))
                     .map_err(zip::result::ZipError::Io)?;
             }

@@ -21,7 +21,6 @@
 -   **Performance optimizations** 🚀:
 
     -   **Multi-threading**: Parallel processing of files for faster scanning
-    -   **Fast mode**: Stop processing after first suspicious item
     -   **Path filtering**: Include or exclude paths matching patterns
     -   **Custom ignore lists**: Skip specified suspicious keywords
 

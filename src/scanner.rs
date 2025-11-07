@@ -1,11 +1,12 @@
 use crate::config::SYSTEM_CONFIG;
-use crate::database::GOOD_LINKS;
 use crate::detection::{
-    cache_safe_string, calculate_detection_hash, is_cached_safe_string, CRYPTO_REGEX,
-    ENTROPY_THRESHOLD, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX, NAME_LENGTH_THRESHOLD,
-    SUSSY_DOMAINS, URL_REGEX,
+    cache_safe_string, calculate_detection_hash, is_cached_safe_string, ENTROPY_THRESHOLD,
+    SUSSY_DOMAINS,
 };
 use crate::errors::ScanError;
+use crate::filters::{
+    is_known_good_ip, GOOD_LINKS, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX, URL_REGEX,
+};
 use crate::parser::parse_class_structure;
 use crate::types::{
     ClassDetails, DetectionMode, FindingType, ResourceInfo, ScanResult, ScannerOptions,
@@ -35,7 +36,6 @@ pub struct CollapseScanner {
     good_links: HashSet<String>,
     suspicious_domains: HashSet<String>,
     ignored_suspicious_keywords: HashSet<String>,
-    ignored_crypto_keywords: HashSet<String>,
     pub options: ScannerOptions,
     pub found_custom_jvm_indicator: Arc<Mutex<bool>>,
     exclude_patterns: Vec<WildMatch>,
@@ -52,7 +52,6 @@ impl CollapseScanner {
         }
 
         let mut ignored_suspicious_keywords: HashSet<String> = HashSet::new();
-        let mut ignored_crypto_keywords: HashSet<String> = HashSet::new();
 
         if let Some(ref path) = options.ignore_keywords_file {
             if options.verbose {
@@ -65,7 +64,6 @@ impl CollapseScanner {
             match Self::load_ignore_list_from_file(path) {
                 Ok(ignored) => {
                     ignored_suspicious_keywords.extend(ignored.clone());
-                    ignored_crypto_keywords.extend(ignored);
                 }
                 Err(e) => {
                     eprintln!(
@@ -100,7 +98,6 @@ impl CollapseScanner {
             good_links,
             suspicious_domains: SUSSY_DOMAINS.clone(),
             ignored_suspicious_keywords,
-            ignored_crypto_keywords,
             options,
             found_custom_jvm_indicator: Arc::new(Mutex::new(false)),
             exclude_patterns,
@@ -657,18 +654,22 @@ impl CollapseScanner {
 
     fn check_network_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
         if let Some(cap) = IP_REGEX.captures(string) {
-            findings.push((
-                FindingType::IpAddress,
-                cap.get(0).unwrap().as_str().to_string(),
-            ));
+            let ip_str = cap.get(0).unwrap().as_str().to_string();
+            // Skip known-good / unreachable IPs
+            if is_known_good_ip(&ip_str) {
+                return;
+            }
+            findings.push((FindingType::IpAddress, ip_str));
             return;
         }
 
         if let Some(cap) = IPV6_REGEX.captures(string) {
-            findings.push((
-                FindingType::IpV6Address,
-                cap.get(0).unwrap().as_str().to_string(),
-            ));
+            let ip_str = cap.get(0).unwrap().as_str().to_string();
+            // Skip known-good / unreachable IPs
+            if is_known_good_ip(&ip_str) {
+                return;
+            }
+            findings.push((FindingType::IpV6Address, ip_str));
             return;
         }
 
@@ -680,6 +681,10 @@ impl CollapseScanner {
                 && !self.is_good_link(&domain)
                 && !self.is_suspicious_domain(&domain)
             {
+                // If the domain is an IP and it's known-good, skip it
+                if is_known_good_ip(&domain) {
+                    return;
+                }
                 findings.push((FindingType::Url, url_match.to_string()));
             }
         }
@@ -735,19 +740,6 @@ impl CollapseScanner {
         false
     }
 
-    fn check_crypto_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if let Some(cap) = CRYPTO_REGEX.captures(string) {
-            let keyword = cap.get(0).unwrap().as_str();
-            let keyword_lower = keyword.to_lowercase();
-            if !self.ignored_crypto_keywords.contains(&keyword_lower) {
-                findings.push((
-                    FindingType::Crypto,
-                    format!("'{}' in \"{}\"", keyword, truncate_string(string, 80)),
-                ));
-            }
-        }
-    }
-
     fn check_malicious_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
         if let Some(cap) = MALICIOUS_PATTERN_REGEX.captures(string) {
             let keyword = cap.get(0).unwrap().as_str();
@@ -771,8 +763,6 @@ impl CollapseScanner {
             }
         } else if MALICIOUS_PATTERN_REGEX.is_match(string) {
             self.check_malicious_patterns(string, findings);
-        } else if CRYPTO_REGEX.is_match(string) {
-            self.check_crypto_patterns(string, findings);
         }
 
         findings.len() == initial_len
@@ -788,16 +778,6 @@ impl CollapseScanner {
         if findings.len() == initial_len {
             self.check_suspicious_url_patterns(string, findings);
         }
-        findings.len() == initial_len
-    }
-
-    fn check_crypto_patterns_only(
-        &self,
-        string: &str,
-        findings: &mut Vec<(FindingType, String)>,
-    ) -> bool {
-        let initial_len = findings.len();
-        self.check_crypto_patterns(string, findings);
         findings.len() == initial_len
     }
 
@@ -821,8 +801,6 @@ impl CollapseScanner {
                 return;
             }
 
-            let name_char_count = name.chars().count();
-
             if name.contains('/')
                 && context.ends_with(" Name")
                 && !context.starts_with("Class")
@@ -833,11 +811,6 @@ impl CollapseScanner {
                 if simple_name.contains('/') && simple_name == name && self.options.verbose {
                     println!("      Suspicious name contains '/': {} - {}", context, name);
                 }
-            } else if name_char_count > NAME_LENGTH_THRESHOLD {
-                findings.push((
-                    FindingType::ObfuscationLongName,
-                    format!("{} '{}' (len {})", context, name, name_char_count),
-                ));
             }
 
             let non_ascii_count = name.chars().filter(|&c| !c.is_ascii()).count();
@@ -1038,78 +1011,53 @@ impl CollapseScanner {
             return 1;
         }
 
-        let mut score = 0;
-
         let mut type_counts: HashMap<FindingType, usize> = HashMap::new();
         for (finding_type, _) in findings {
             *type_counts.entry(finding_type.clone()).or_insert(0) += 1;
         }
 
-        let suspicious_url_count = type_counts.get(&FindingType::SuspiciousUrl).unwrap_or(&0);
-        let discord_webhook_count = type_counts.get(&FindingType::DiscordWebhook).unwrap_or(&0);
-        let ip_address_count = type_counts.get(&FindingType::IpAddress).unwrap_or(&0)
-            + type_counts.get(&FindingType::IpV6Address).unwrap_or(&0);
-        let url_count = type_counts.get(&FindingType::Url).unwrap_or(&0);
-        let crypto_count = type_counts.get(&FindingType::Crypto).unwrap_or(&0);
-        let suspicious_keyword_count = type_counts
-            .get(&FindingType::SuspiciousKeyword)
-            .unwrap_or(&0);
-        let obfuscation_count = type_counts
-            .get(&FindingType::ObfuscationLongName)
-            .unwrap_or(&0)
-            + type_counts
-                .get(&FindingType::ObfuscationUnicode)
-                .unwrap_or(&0);
-        let high_entropy_count = type_counts.get(&FindingType::HighEntropy).unwrap_or(&0);
-
-        // Immediate max-risk if any Discord webhook is present in the file
-        if *discord_webhook_count > 0 {
+        if *type_counts.get(&FindingType::DiscordWebhook).unwrap_or(&0) > 0 {
             return 10;
         }
 
-        // Rebalanced scoring that better reflects per-file risk
-        // Suspicious URLs are strong indicators
-        score += (suspicious_url_count * 5).min(9);
-        // IP addresses are medium-strong indicators
-        score += (ip_address_count * 3).min(6);
-        // Generic URLs are weaker individually but still contribute
-        score += (*url_count * 2).min(6);
-        // Suspicious keywords are notable
-        score += (suspicious_keyword_count * 3).min(6);
-        // Crypto-related keywords are less immediately dangerous but relevant
-        score += (*crypto_count * 2).min(4);
-        // Obfuscation increases suspicion
-        score += obfuscation_count.min(4);
-        // High entropy is a strong sign when present multiple times
-        score += (high_entropy_count * 3).min(6);
+        let mut score_acc: usize = 0;
+        for (ftype, count) in &type_counts {
+            let weight = ftype.base_score() as usize;
+            let cap = ftype.max_contribution() as usize;
+            let contrib = (count * weight).min(cap);
+            score_acc += contrib;
+        }
 
-        // Resource-based boosts
         if let Some(ri) = resource_info {
             if ri.is_dead_class_candidate {
-                score += 3;
+                score_acc += 3;
             }
 
             if ri.entropy > ENTROPY_THRESHOLD + 1.0 {
-                score += 3;
+                score_acc += 3;
             } else if ri.entropy > ENTROPY_THRESHOLD + 0.5 {
-                score += 2;
+                score_acc += 2;
             } else if ri.entropy > ENTROPY_THRESHOLD + 0.3 {
-                score += 1;
+                score_acc += 1;
             }
         }
 
-        // Combine indicators: URL + IP/keyword is particularly bad
-        if *suspicious_url_count > 0 && (*suspicious_keyword_count > 0 || ip_address_count > 0) {
-            score += 5;
+        let suspicious_url_count = *type_counts.get(&FindingType::SuspiciousUrl).unwrap_or(&0);
+        let suspicious_keyword_count = *type_counts
+            .get(&FindingType::SuspiciousKeyword)
+            .unwrap_or(&0);
+        let ip_address_count = *type_counts.get(&FindingType::IpAddress).unwrap_or(&0)
+            + *type_counts.get(&FindingType::IpV6Address).unwrap_or(&0);
+
+        if suspicious_url_count > 0 && (suspicious_keyword_count > 0 || ip_address_count > 0) {
+            score_acc += 5;
         }
 
-        // Diverse indicator types add to confidence
         if type_counts.len() >= 3 {
-            score += 2;
+            score_acc += 2;
         }
 
-        // Normalize into 1..=10 range
-        let final_score = score.clamp(1, 10) as u8;
+        let final_score = (score_acc as i32).clamp(1, 10) as u8;
         final_score
     }
 
@@ -1387,13 +1335,6 @@ impl CollapseScanner {
             DetectionMode::Network => {
                 for string in strings_to_scan {
                     if self.check_network_patterns_combined(string, findings) {
-                        cache_safe_string(string);
-                    }
-                }
-            }
-            DetectionMode::Crypto => {
-                for string in strings_to_scan {
-                    if self.check_crypto_patterns_only(string, findings) {
                         cache_safe_string(string);
                     }
                 }

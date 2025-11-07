@@ -1,7 +1,5 @@
-use regex::Regex;
 use std::collections::HashSet;
 
-pub const NAME_LENGTH_THRESHOLD: usize = 100;
 pub const ENTROPY_THRESHOLD: f64 = 7.2;
 
 lazy_static::lazy_static! {
@@ -19,26 +17,13 @@ lazy_static::lazy_static! {
             "discord.com",
             "discordapp.com",
             "pastebin.com",
+            "bit.ly",
+            "tinyurl.com",
         ]
         .iter()
         .map(|&s| s.to_lowercase())
         .collect()
     };
-
-    pub static ref IP_REGEX: Regex =
-        Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap();
-
-    pub static ref IPV6_REGEX: Regex =
-        Regex::new(r"(?i)\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b").unwrap();
-
-    pub static ref URL_REGEX: Regex =
-        Regex::new(r#"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»""'']))"#).unwrap();
-
-    pub static ref CRYPTO_REGEX: Regex =
-        Regex::new(r"(?i)\b(aes|des|rsa|md5|sha[1-9]*-?\d*|blowfish|twofish|pgp|gpg|cipher|keystore|keygenerator|secretkey|password|encrypt|decrypt|hash|salt|ivParameterSpec|SecureRandom)\b").unwrap();
-
-    pub static ref MALICIOUS_PATTERN_REGEX: Regex =
-        Regex::new(r"(?i)\b(backdoor|exploit|payload|shellcode|bypass|rootkit|keylog|rat\b|trojan|malware|spyware|meterpreter|cobaltstrike|powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|download|upload|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|unsafe|jndi|ldap|rmi|base64|decode)\b").unwrap();
 }
 
 pub fn is_cached_safe_string(s: &str) -> bool {

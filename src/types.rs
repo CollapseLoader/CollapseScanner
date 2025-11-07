@@ -19,9 +19,7 @@ pub enum FindingType {
     Url,
     SuspiciousUrl,
     DiscordWebhook,
-    Crypto,
     SuspiciousKeyword,
-    ObfuscationLongName,
     ObfuscationUnicode,
     HighEntropy,
 }
@@ -34,9 +32,7 @@ impl std::fmt::Display for FindingType {
             FindingType::Url => write!(f, "URL"),
             FindingType::SuspiciousUrl => write!(f, "Suspicious URL"),
             FindingType::DiscordWebhook => write!(f, "Discord Webhook"),
-            FindingType::Crypto => write!(f, "Crypto Keyword"),
             FindingType::SuspiciousKeyword => write!(f, "Suspicious Keyword"),
-            FindingType::ObfuscationLongName => write!(f, "Obfuscation (Long Name)"),
             FindingType::ObfuscationUnicode => write!(f, "Obfuscation (Unicode Name)"),
             FindingType::HighEntropy => write!(f, "High Entropy"),
         }
@@ -50,11 +46,35 @@ impl FindingType {
             FindingType::Url => ("🔗", "blue"),
             FindingType::SuspiciousUrl => ("⚠️ ", "yellow"),
             FindingType::DiscordWebhook => ("🤖", "red"),
-            FindingType::Crypto => ("🔒", "yellow"),
             FindingType::SuspiciousKeyword => ("❗", "red"),
-            FindingType::ObfuscationLongName => ("📏", "magenta"),
             FindingType::ObfuscationUnicode => ("㊙️ ", "magenta"),
             FindingType::HighEntropy => ("🔥", "yellow"),
+        }
+    }
+}
+
+impl FindingType {
+    pub fn base_score(&self) -> u8 {
+        match self {
+            FindingType::IpAddress | FindingType::IpV6Address => 3,
+            FindingType::Url => 2,
+            FindingType::SuspiciousUrl => 5,
+            FindingType::DiscordWebhook => 10,
+            FindingType::SuspiciousKeyword => 3,
+            FindingType::ObfuscationUnicode => 1,
+            FindingType::HighEntropy => 3,
+        }
+    }
+
+    pub fn max_contribution(&self) -> u8 {
+        match self {
+            FindingType::SuspiciousUrl => 9,
+            FindingType::IpAddress | FindingType::IpV6Address => 6,
+            FindingType::Url => 6,
+            FindingType::SuspiciousKeyword => 6,
+            FindingType::ObfuscationUnicode => 4,
+            FindingType::HighEntropy => 6,
+            FindingType::DiscordWebhook => 10,
         }
     }
 }
@@ -96,7 +116,6 @@ pub struct ResourceInfo {
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
 pub enum DetectionMode {
     Network,
-    Crypto,
     Malicious,
     Obfuscation,
     All,

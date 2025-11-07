@@ -1,9 +1,9 @@
 #![allow(clippy::collapsible_else_if)]
 
 mod config;
-mod database;
 mod detection;
 mod errors;
+mod filters;
 mod parser;
 mod scanner;
 mod types;
@@ -28,7 +28,7 @@ use crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions};
     about = "Advanced JAR/class file analysis and reverse engineering tool",
     long_about = "CollapseScanner is a powerful static analysis tool designed for security researchers, \
                   malware analysts, and developers to analyze Java JAR files and class files. It detects \
-                  suspicious patterns, network communications, cryptographic operations, and obfuscation \
+                  suspicious patterns, network communications and obfuscation \
                   techniques that may indicate malicious behavior or security vulnerabilities."
 )]
 struct Args {
@@ -218,7 +218,6 @@ fn print_scan_configuration(path: &Path, args: &Args, scanner: &CollapseScanner)
         match args.mode {
             DetectionMode::All => "Comprehensive analysis of all patterns",
             DetectionMode::Network => "Network-related patterns only",
-            DetectionMode::Crypto => "Cryptographic patterns only",
             DetectionMode::Malicious => "Malicious code patterns only",
             DetectionMode::Obfuscation => "Obfuscation detection only",
         }
@@ -268,6 +267,67 @@ fn print_optional_configurations(scanner: &CollapseScanner, args: &Args) {
         );
         println!("   {}", "Enabled".bright_white());
     }
+}
+
+// Calculate the average danger score (1-10), choose a color name and a risk level string
+// for a set of significant scan results. This extracts the previous inline logic so it's
+// easier to read and reason about.
+fn calculate_scan_score(
+    sorted_significant_results: &[&ScanResult],
+) -> (u8, &'static str, &'static str) {
+    if sorted_significant_results.is_empty() {
+        return (1, "green", "MINIMAL RISK");
+    }
+
+    // Weighted average gives extra importance to very high scores (>=8).
+    let mut weighted_sum: u32 = 0;
+    let mut weight_total: u32 = 0;
+    let mut max_danger_score: u8 = 0;
+
+    for r in sorted_significant_results {
+        let w: u32 = if r.danger_score >= 8 { 5 } else { 1 };
+        weighted_sum += (r.danger_score as u32) * w;
+        weight_total += w;
+        if r.danger_score > max_danger_score {
+            max_danger_score = r.danger_score;
+        }
+    }
+
+    let avg_danger_score = {
+        let weighted_avg = if weight_total > 0 {
+            (weighted_sum as f32 / weight_total as f32).round() as u8
+        } else {
+            1
+        };
+        if max_danger_score == 10 {
+            10
+        } else {
+            std::cmp::max(weighted_avg, max_danger_score).clamp(1, 10)
+        }
+    };
+
+    let score_color = match avg_danger_score {
+        1 => "green",
+        2 => "bright_green",
+        3 => "cyan",
+        4 => "bright_cyan",
+        5 => "yellow",
+        6 => "bright_yellow",
+        7 => "magenta",
+        8 => "red",
+        9 => "red",
+        10 => "red",
+        _ => "green",
+    };
+
+    let risk_level = match avg_danger_score {
+        8..=10 => "HIGH RISK",
+        5..=7 => "MODERATE RISK",
+        3..=4 => "LOW RISK",
+        _ => "MINIMAL RISK",
+    };
+
+    (avg_danger_score, score_color, risk_level)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -390,65 +450,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .bold()
                     );
 
+                    // Build a map of findings grouped by type so we can print the
+                    // FINDINGS REPORT sorted by finding type instead of by file.
+                    let mut findings_by_type: HashMap<
+                        FindingType,
+                        Vec<(String /* file_path */, String /* value */)>,
+                    > = HashMap::new();
+
                     for result in &sorted_significant_results {
-                        if let Some(ri) = &result.resource_info {
-                            let class_type = if ri.is_dead_class_candidate {
-                                " (Custom JVM Class Candidate)"
-                            } else {
-                                ""
-                            };
-
-                            println!(
-                                "\n{} {}",
-                                "📄".bright_cyan().bold(),
-                                format!("File: {}{}", result.file_path, class_type)
-                                    .bright_cyan()
-                                    .bold()
-                            );
-
-                            if scanner.options.verbose {
-                                println!(
-                                    "   {} Size: {} bytes | Entropy: {:.2} | Danger Score: {}/10",
-                                    "📊".dimmed(),
-                                    ri.size,
-                                    ri.entropy,
-                                    result.danger_score
-                                );
-
-                                if result.matches.is_empty() {
-                                    println!(
-                                        "   {}",
-                                        "No specific findings in this file.".dimmed()
-                                    );
-                                }
-                            }
-                        } else if result.class_details.is_some() {
-                            println!(
-                                "   {} {}",
-                                "ℹ️".dimmed(),
-                                "(Standard Class - Info Missing)".dimmed()
-                            );
+                        for (finding_type, value) in &result.matches {
+                            findings_by_type
+                                .entry(finding_type.clone())
+                                .or_default()
+                                .push((result.file_path.clone(), value.clone()));
                         }
+                    }
 
-                        let mut sorted_matches = result.matches.clone();
-                        sorted_matches.sort_by_key(|(t, v)| (format!("{}", t), v.clone()));
+                    // Sort the finding types by their display name for stable output
+                    let mut finding_types: Vec<FindingType> =
+                        findings_by_type.keys().cloned().collect();
+                    finding_types.sort_by_key(|t| t.to_string());
 
-                        for (finding_type, value) in &sorted_matches {
-                            let (icon, color) = finding_type.with_emoji();
+                    for ftype in &finding_types {
+                        let entries = findings_by_type.get(ftype).unwrap();
+                        let (icon, color) = ftype.with_emoji();
 
+                        println!(
+                            "\n  {} {} ({})",
+                            icon.color(color).bold(),
+                            ftype.to_string().color(color).bold(),
+                            entries.len().to_string().bright_white()
+                        );
+
+                        // Sort entries by file path then value for deterministic output
+                        let mut sorted_entries = entries.clone();
+                        sorted_entries.sort_by(|a, b| {
+                            let file_cmp = a.0.cmp(&b.0);
+                            if file_cmp == std::cmp::Ordering::Equal {
+                                a.1.cmp(&b.1)
+                            } else {
+                                file_cmp
+                            }
+                        });
+
+                        for (file_path, value) in sorted_entries {
                             println!(
-                                "     {} {}: {}",
-                                icon.color(color).bold(),
-                                finding_type.to_string().color(color).bold(),
+                                "    • {}: {}",
+                                file_path.bright_cyan(),
                                 value.bright_white()
                             );
-                        }
-
-                        if scanner.options.verbose && !result.danger_explanation.is_empty() {
-                            println!("     {} Risk Assessment:", "⚠️".yellow().bold());
-                            for explanation in &result.danger_explanation {
-                                println!("        • {}", explanation.dimmed());
-                            }
                         }
                     }
                 }
@@ -474,53 +524,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if total_findings > 0 {
                     let files_with_findings = sorted_significant_results.len();
-                    let mut weighted_sum: u32 = 0;
-                    let mut weight_total: u32 = 0;
-                    let mut max_danger_score: u8 = 0;
-                    for r in &sorted_significant_results {
-                        let w: u32 = if r.danger_score >= 8 { 5 } else { 1 };
-                        weighted_sum += (r.danger_score as u32) * w;
-                        weight_total += w;
-                        if r.danger_score > max_danger_score {
-                            max_danger_score = r.danger_score;
-                        }
-                    }
-
-                    let avg_danger_score = if !sorted_significant_results.is_empty() {
-                        let weighted_avg = if weight_total > 0 {
-                            (weighted_sum as f32 / weight_total as f32).round() as u8
-                        } else {
-                            1
-                        };
-                        if max_danger_score == 10 {
-                            10
-                        } else {
-                            std::cmp::max(weighted_avg, max_danger_score).clamp(1, 10)
-                        }
-                    } else {
-                        1
-                    };
-
-                    let score_color = match avg_danger_score {
-                        1 => "green",
-                        2 => "bright_green",
-                        3 => "cyan",
-                        4 => "bright_cyan",
-                        5 => "yellow",
-                        6 => "bright_yellow",
-                        7 => "magenta",
-                        8 => "red",
-                        9 => "red",
-                        10 => "red",
-                        _ => "green",
-                    };
-
-                    let risk_level = match avg_danger_score {
-                        8..=10 => "HIGH RISK",
-                        5..=7 => "MODERATE RISK",
-                        3..=4 => "LOW RISK",
-                        _ => "MINIMAL RISK",
-                    };
+                    let (avg_danger_score, score_color, risk_level) =
+                        calculate_scan_score(&sorted_significant_results);
 
                     let scan_duration = scan_start_time.elapsed();
                     let total_files_scanned = results.len();

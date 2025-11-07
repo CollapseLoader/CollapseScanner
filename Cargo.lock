@@ -218,6 +218,7 @@ dependencies = [
  "encoding_rs",
  "hex",
  "indicatif",
+ "ipnet",
  "lazy_static",
  "lru",
  "rayon",
@@ -658,6 +659,12 @@ checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "generic-array",
 ]
+
+[[package]]
+name = "ipnet"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
 
 [[package]]
 name = "is_terminal_polyfill"

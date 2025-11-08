@@ -1,5 +1,3 @@
-#![allow(clippy::collapsible_else_if)]
-
 mod config;
 mod detection;
 mod errors;
@@ -8,6 +6,7 @@ mod parser;
 mod scanner;
 mod types;
 mod utils;
+
 #[cfg(all(feature = "cli", not(feature = "gui")))]
 use colored::Colorize;
 
@@ -29,7 +28,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[cfg(all(feature = "cli", not(feature = "gui")))]
-use crate::scanner::CollapseScanner;
+use crate::scanner::scan::CollapseScanner;
 #[cfg(all(feature = "cli", not(feature = "gui")))]
 use crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions};
 

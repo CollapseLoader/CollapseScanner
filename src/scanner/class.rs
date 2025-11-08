@@ -1,658 +1,21 @@
-use crate::config::SYSTEM_CONFIG;
-use crate::detection::{
-    cache_safe_string, calculate_detection_hash, is_cached_safe_string, ENTROPY_THRESHOLD,
-    SUSSY_DOMAINS,
-};
-use crate::errors::ScanError;
-use crate::filters::{
-    is_known_good_ip, GOOD_LINKS, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX, URL_REGEX,
-};
-use crate::parser::parse_class_structure;
-use crate::types::{
-    ClassDetails, DetectionMode, FindingType, ResourceInfo, ScanResult, ScannerOptions,
-};
-use crate::utils::{calculate_entropy, extract_domain, get_simple_name, truncate_string};
-
-type ResultCache = Arc<Mutex<LruCache<u64, Vec<(FindingType, String)>>>>;
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, File};
+use std::io::{self, Write};
 
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
-use lru::LruCache;
-use rayon::prelude::*;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::num::NonZeroUsize;
-use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use walkdir::WalkDir;
-use wildmatch::WildMatch;
-use zip::ZipArchive;
 
-pub struct CollapseScanner {
-    good_links: HashSet<String>,
-    suspicious_domains: HashSet<String>,
-    ignored_suspicious_keywords: HashSet<String>,
-    pub options: ScannerOptions,
-    pub found_custom_jvm_indicator: Arc<Mutex<bool>>,
-    exclude_patterns: Vec<WildMatch>,
-    find_patterns: Vec<WildMatch>,
-    result_cache: ResultCache,
-}
+use crate::detection::{
+    cache_safe_string, calculate_detection_hash, is_cached_safe_string, ENTROPY_THRESHOLD,
+};
+use crate::errors::ScanError;
+use crate::filters::{is_known_good_ip, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX, URL_REGEX};
+use crate::parser::parse_class_structure;
+use crate::scanner::scan::CollapseScanner;
+use crate::types::{ClassDetails, DetectionMode, FindingType, ResourceInfo, ScanResult};
+use crate::utils::{calculate_entropy, extract_domain, get_simple_name, truncate_string};
 
 impl CollapseScanner {
-    pub fn new(options: ScannerOptions) -> Result<Self, ScanError> {
-        let good_links: HashSet<String> = GOOD_LINKS.iter().cloned().collect();
-
-        if options.extract_resources || options.extract_strings || options.export_json {
-            fs::create_dir_all(&options.output_dir)?;
-        }
-
-        let mut ignored_suspicious_keywords: HashSet<String> = HashSet::new();
-
-        if let Some(ref path) = options.ignore_keywords_file {
-            if options.verbose {
-                println!(
-                    "{} Loading keywords ignore list from: {}",
-                    "📄".yellow(),
-                    path.display()
-                );
-            }
-            match Self::load_ignore_list_from_file(path) {
-                Ok(ignored) => {
-                    ignored_suspicious_keywords.extend(ignored.clone());
-                }
-                Err(e) => {
-                    eprintln!(
-                        "{} Warning: Could not load keywords ignore list from {}: {}",
-                        "⚠️".yellow(),
-                        path.display(),
-                        e
-                    );
-                }
-            }
-        }
-
-        let exclude_patterns = options
-            .exclude_patterns
-            .iter()
-            .map(|p| WildMatch::new(p))
-            .collect();
-        let find_patterns = options
-            .find_patterns
-            .iter()
-            .map(|p| WildMatch::new(p))
-            .collect();
-
-        let cache_size = NonZeroUsize::new(SYSTEM_CONFIG.result_cache_size)
-            .unwrap_or_else(|| NonZeroUsize::new(1).unwrap());
-
-        if options.verbose {
-            SYSTEM_CONFIG.log_config();
-        }
-
-        Ok(CollapseScanner {
-            good_links,
-            suspicious_domains: SUSSY_DOMAINS.clone(),
-            ignored_suspicious_keywords,
-            options,
-            found_custom_jvm_indicator: Arc::new(Mutex::new(false)),
-            exclude_patterns,
-            find_patterns,
-            result_cache: Arc::new(Mutex::new(LruCache::new(cache_size))),
-        })
-    }
-
-    fn should_scan(&self, internal_path: &str) -> bool {
-        if self
-            .exclude_patterns
-            .iter()
-            .any(|pattern| pattern.matches(internal_path))
-        {
-            if self.options.verbose {
-                println!(
-                    "{} Skipping excluded file: {}",
-                    "🚫".dimmed(),
-                    internal_path
-                );
-            }
-            return false;
-        }
-
-        if !self.find_patterns.is_empty() {
-            let matches = self
-                .find_patterns
-                .iter()
-                .any(|pattern| pattern.matches(internal_path));
-
-            if !matches {
-                return false;
-            }
-        }
-
-        true
-    }
-    fn load_ignore_list_from_file(path: &Path) -> Result<HashSet<String>, io::Error> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        let mut ignored_set = HashSet::new();
-
-        for line in reader.lines() {
-            let line_content = line?;
-            let trimmed = line_content.trim();
-            if !trimmed.is_empty() {
-                ignored_set.insert(trimmed.to_lowercase());
-            }
-        }
-        Ok(ignored_set)
-    }
-
-    pub fn scan_path(&self, path: &Path) -> Result<Vec<ScanResult>, ScanError> {
-        if let Some(max_size) = self.options.max_file_size {
-            if let Ok(metadata) = path.metadata() {
-                if metadata.len() > max_size as u64 {
-                    if self.options.verbose {
-                        println!(
-                            "{} Skipping large file: {} ({} MB > {} MB)",
-                            "🚫".dimmed(),
-                            path.display(),
-                            metadata.len() / (1024 * 1024),
-                            max_size / (1024 * 1024)
-                        );
-                    }
-                    return Ok(Vec::new());
-                }
-            }
-        }
-
-        if path.is_dir() {
-            self.scan_directory(path)
-        } else if path.extension().is_some_and(|ext| ext == "jar") {
-            self.scan_jar_file(path)
-        } else if path.extension().is_some_and(|ext| ext == "class") {
-            let filename = path.file_name().unwrap_or_default().to_string_lossy();
-            if !self.should_scan(&filename) {
-                if self.options.verbose {
-                    println!(
-                        "{} Skipping filtered file: {}",
-                        "🚫".dimmed(),
-                        path.display()
-                    );
-                }
-                return Ok(Vec::new());
-            }
-
-            if self.options.verbose {
-                println!(
-                    "{} Scanning loose class file: {}",
-                    "📄".blue(),
-                    path.display()
-                );
-            }
-            let file_data = fs::read(path)?;
-            let resource_info = self.analyze_resource(&filename, &file_data)?;
-            self.scan_class_file_data(&filename, file_data, Some(resource_info))
-                .map(|res| vec![res])
-        } else {
-            Err(ScanError::UnsupportedFileType(
-                path.extension().map(|s| s.to_os_string()),
-            ))
-        }
-    }
-
-    fn scan_directory(&self, dir_path: &Path) -> Result<Vec<ScanResult>, ScanError> {
-        let mut results = Vec::new();
-        if self.options.verbose {
-            println!("{} Scanning directory: {}", "📁".blue(), dir_path.display());
-        }
-
-        let start_time = Instant::now();
-        let mut scannable_files = Vec::new();
-        let mut skipped_count = 0;
-        let mut total_files_walked = 0;
-
-        for entry in WalkDir::new(dir_path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-        {
-            total_files_walked += 1;
-            let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|ext| ext == "jar" || ext == "class")
-            {
-                let relative_path = match path.strip_prefix(dir_path) {
-                    Ok(p) => p.to_string_lossy().replace('\\', "/"),
-                    Err(_) => {
-                        if self.options.verbose {
-                            eprintln!(
-                                  "{} Warning: Could not strip prefix for path {}. Using full path for filtering.",
-                                  "⚠️".yellow(), path.display()
-                              );
-                        }
-                        path.to_string_lossy().replace('\\', "/")
-                    }
-                };
-
-                if self.should_scan(&relative_path) {
-                    scannable_files.push(path.to_path_buf());
-                } else {
-                    skipped_count += 1;
-                }
-            }
-        }
-
-        if scannable_files.is_empty() {
-            if self.options.verbose {
-                println!(
-                    "{} No scannable files found{} in directory {}",
-                    "ℹ️".blue(),
-                    if skipped_count > 0 {
-                        format!(" ({} skipped by filters)", skipped_count).dimmed()
-                    } else {
-                        "".into()
-                    },
-                    dir_path.display()
-                );
-                println!(
-                    "{} Total files walked: {} | Scannable files: 0",
-                    "📊".dimmed(),
-                    total_files_walked
-                );
-            }
-            return Ok(results);
-        }
-
-        if self.options.verbose {
-            println!(
-                "{} Found {} scannable files{} in {}ms",
-                "🔍".green(),
-                scannable_files.len(),
-                if skipped_count > 0 {
-                    format!(" ({} skipped by filters)", skipped_count).dimmed()
-                } else {
-                    "".into()
-                },
-                start_time.elapsed().as_millis()
-            );
-            println!(
-                "{} Total files walked: {} | Filtered to: {}",
-                "📊".dimmed(),
-                total_files_walked,
-                scannable_files.len()
-            );
-        }
-
-        let progress_style = ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>7}/{len:7} ({percent:>3}%) {msg}")
-            .unwrap()
-            .progress_chars("█▉▊▋▌▍▎▏  ");
-
-        let progress = Arc::new(Mutex::new(ProgressBar::new(scannable_files.len() as u64)));
-        progress.lock().unwrap().set_style(progress_style);
-        progress.lock().unwrap().set_message("Analyzing files...");
-
-        if let Some(ref prog_arc) = self.options.progress {
-            if let Ok(mut gp) = prog_arc.lock() {
-                gp.total = scannable_files.len();
-                gp.current = 0;
-                gp.message = "Analyzing files...".to_string();
-            }
-        }
-
-        let processed_count = Arc::new(AtomicUsize::new(0));
-
-        let scan_results: Vec<_> = scannable_files
-            .par_iter()
-            .with_max_len(100)
-            .map(|path| {
-                if let Some(ref prog_arc) = self.options.progress {
-                    if let Ok(gp) = prog_arc.lock() {
-                        if gp.cancelled {
-                            return Ok(Vec::new());
-                        }
-                    }
-                }
-
-                let result = self.scan_path(path);
-
-                let count = processed_count.fetch_add(1, Ordering::Relaxed);
-                if let Some(ref prog_arc) = self.options.progress {
-                    if let Ok(mut gp) = prog_arc.lock() {
-                        if gp.cancelled {
-                            gp.message = "Scan cancelled".to_string();
-                            return Ok(Vec::new());
-                        }
-                        gp.current = count + 1;
-                        gp.total = scannable_files.len();
-                        gp.message = format!("Scanning: {}", path.display());
-                    }
-                }
-                if count.is_multiple_of(10) {
-                    let progress_guard = progress.lock().unwrap();
-                    if self.options.verbose {
-                        progress_guard.set_message(format!("Scanning: {}", path.display()));
-                    }
-                    progress_guard.inc(10);
-                    drop(progress_guard);
-                }
-
-                result
-            })
-            .collect();
-
-        progress
-            .lock()
-            .unwrap()
-            .finish_with_message(format!("Finished scanning {} files", scannable_files.len()));
-
-        let mut error_count = 0;
-        let mut success_count = 0;
-        for result in scan_results {
-            match result {
-                Ok(mut scan_results) => {
-                    success_count += 1;
-                    results.append(&mut scan_results);
-                }
-                Err(e) => {
-                    error_count += 1;
-                    eprintln!("{} Error scanning file: {}", "⚠️".yellow(), e);
-                }
-            }
-        }
-
-        if self.options.verbose && error_count > 0 {
-            println!(
-                "{} Scan summary: {} successful, {} errors",
-                "📊".dimmed(),
-                success_count,
-                error_count
-            );
-        }
-
-        if self.options.verbose {
-            println!(
-                "{} Directory scan completed in {:.2}s",
-                "✅".green(),
-                start_time.elapsed().as_secs_f64()
-            );
-        }
-
-        Ok(results)
-    }
-
-    fn scan_jar_file(&self, jar_path: &Path) -> Result<Vec<ScanResult>, ScanError> {
-        let start_time = Instant::now();
-        let file = File::open(jar_path)?;
-        let mut archive = ZipArchive::new(file)?;
-        let total_files = archive.len();
-        let mut skipped_count = 0;
-        let mut results = Vec::new();
-        let mut all_resource_info = if self.options.export_json {
-            Vec::with_capacity(total_files)
-        } else {
-            Vec::new()
-        };
-
-        if self.options.verbose {
-            println!("{} Scanning JAR file: {}", "🔎".blue(), jar_path.display());
-        }
-
-        let buffer_size = SYSTEM_CONFIG.buffer_size.min(4 * 1024 * 1024);
-        let avg_entry_size = total_files.saturating_sub(1).max(1) * 1024;
-        let optimal_buffer = (avg_entry_size * 2).min(buffer_size).min(1024 * 1024);
-
-        let mut file_data_vec = Vec::with_capacity(total_files.min(1000));
-        let mut total_memory_used = 0u64;
-        let max_total_memory = 100 * 1024 * 1024;
-
-        for i in 0..total_files {
-            let mut zip_file = match archive.by_index(i) {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!(
-                        "{} Error accessing entry {} in {}: {}",
-                        "⚠️ ".yellow(),
-                        i,
-                        jar_path.display(),
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            let original_entry_name = match zip_file.enclosed_name() {
-                Some(p) => p.to_string_lossy().replace('\\', "/"),
-                None => String::from_utf8_lossy(zip_file.name_raw()).replace('\\', "/"),
-            };
-
-            if !self.should_scan(&original_entry_name) {
-                skipped_count += 1;
-                continue;
-            }
-
-            let file_size = zip_file.size() as usize;
-            if file_size > optimal_buffer {
-                skipped_count += 1;
-                continue;
-            }
-
-            if total_memory_used + file_size as u64 > max_total_memory {
-                break;
-            }
-
-            let mut buffer = Vec::with_capacity(file_size);
-            if let Err(e) = zip_file.read_to_end(&mut buffer) {
-                eprintln!(
-                    "{} Error reading content of {}: {}",
-                    "⚠️ ".yellow(),
-                    original_entry_name,
-                    e
-                );
-                continue;
-            }
-
-            total_memory_used += buffer.len() as u64;
-            file_data_vec.push((original_entry_name, buffer));
-        }
-
-        let pb_template = format!("{} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} ({{percent}}%) Processing: {{msg}}", "🔍".green());
-
-        let progress_bar = Arc::new(Mutex::new(ProgressBar::new(file_data_vec.len() as u64)));
-        progress_bar.lock().unwrap().set_style(
-            ProgressStyle::default_bar()
-                .template(&pb_template)?
-                .progress_chars("█▉▊▋▌▍▎▏  "),
-        );
-
-        let processed_count = Arc::new(AtomicUsize::new(0));
-
-        if let Some(ref prog_arc) = self.options.progress {
-            if let Ok(mut gp) = prog_arc.lock() {
-                gp.total = file_data_vec.len();
-                gp.current = 0;
-                gp.message = "Processing JAR entries...".to_string();
-            }
-        }
-
-        let scan_results: Vec<_> = file_data_vec
-            .par_iter()
-            .with_max_len(10)
-            .map(|(original_entry_name, buffer)| {
-                if let Some(ref prog_arc) = self.options.progress {
-                    if let Ok(gp) = prog_arc.lock() {
-                        if gp.cancelled {
-                            return Ok((
-                                None,
-                                ResourceInfo {
-                                    path: original_entry_name.clone(),
-                                    size: buffer.len() as u64,
-                                    is_class_file: false,
-                                    entropy: 0.0,
-                                    is_dead_class_candidate: false,
-                                },
-                            ));
-                        }
-                    }
-                }
-
-                self.process_jar_entry(original_entry_name, buffer, &progress_bar, &processed_count)
-            })
-            .collect();
-
-        for scan_result in scan_results {
-            match scan_result {
-                Ok((Some(scan_result), resource_info)) => {
-                    results.push(scan_result);
-                    if self.options.export_json {
-                        all_resource_info.push(resource_info);
-                    }
-                }
-                Ok((None, resource_info)) => {
-                    if self.options.export_json {
-                        all_resource_info.push(resource_info);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("{} Error processing JAR entry: {}", "⚠️ ".yellow(), e);
-                }
-            }
-        }
-
-        progress_bar.lock().unwrap().finish_with_message(format!(
-            "Finished processing {} files ({} skipped, {} analyzed)",
-            total_files,
-            skipped_count,
-            file_data_vec.len()
-        ));
-
-        if let Some(ref prog_arc) = self.options.progress {
-            if let Ok(mut gp) = prog_arc.lock() {
-                gp.current = gp.total;
-                gp.message = format!("Finished processing {} files", file_data_vec.len());
-            }
-        }
-
-        if self.options.export_json && !all_resource_info.is_empty() {
-            let resources_json_path = self.options.output_dir.join(format!(
-                "{}_resources.json",
-                jar_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .replace(".jar", "")
-            ));
-            let json = serde_json::to_string_pretty(&all_resource_info)?;
-            match File::create(&resources_json_path) {
-                Ok(mut json_file) => {
-                    if let Err(e) = json_file.write_all(json.as_bytes()) {
-                        eprintln!(
-                            "{} Error writing resources JSON to {}: {}",
-                            "⚠️".yellow(),
-                            resources_json_path.display(),
-                            e
-                        );
-                    }
-                }
-                Err(e) => eprintln!(
-                    "{} Error creating resources JSON file {}: {}",
-                    "⚠️".yellow(),
-                    resources_json_path.display(),
-                    e
-                ),
-            };
-        }
-
-        if self.options.verbose {
-            println!(
-                "{} JAR scan completed in {:.2}s",
-                "✅".green(),
-                start_time.elapsed().as_secs_f64()
-            );
-        }
-
-        Ok(results)
-    }
-
-    fn process_jar_entry(
-        &self,
-        original_entry_name: &str,
-        buffer: &[u8],
-        progress_bar: &Arc<Mutex<ProgressBar>>,
-        processed_count: &Arc<AtomicUsize>,
-    ) -> Result<(Option<ScanResult>, ResourceInfo), ScanError> {
-        let pb_guard = progress_bar.lock().unwrap();
-        pb_guard.set_message(original_entry_name.to_string());
-        drop(pb_guard);
-
-        if self.options.extract_resources {
-            if let Err(e) = self.extract_resource(original_entry_name, buffer) {
-                eprintln!(
-                    "{} Error during extraction of {}: {}",
-                    "⚠️ ".yellow(),
-                    original_entry_name,
-                    e
-                );
-            }
-        }
-
-        let resource_info = self.analyze_resource(original_entry_name, buffer)?;
-
-        let scan_result = if resource_info.is_class_file || resource_info.is_dead_class_candidate {
-            self.scan_class_data(buffer, original_entry_name, Some(resource_info.clone()))?
-        } else {
-            None
-        };
-
-        let count = processed_count.fetch_add(1, Ordering::Relaxed);
-        if let Some(ref prog_arc) = self.options.progress {
-            if let Ok(mut gp) = prog_arc.lock() {
-                if gp.cancelled {
-                    gp.message = "Scan cancelled".to_string();
-                    return Ok((None, resource_info));
-                }
-                gp.current = count + 1;
-                gp.message = original_entry_name.to_string();
-            }
-        }
-
-        if count.is_multiple_of(10) {
-            let pb_guard = progress_bar.lock().unwrap();
-            pb_guard.inc(10);
-            drop(pb_guard);
-        }
-
-        Ok((scan_result, resource_info))
-    }
-
-    fn analyze_resource(
-        &self,
-        original_path_str: &str,
-        data: &[u8],
-    ) -> Result<ResourceInfo, ScanError> {
-        let is_class_name_candidate =
-            original_path_str.ends_with(".class") || original_path_str.ends_with(".class/");
-
-        let is_standard_class_file =
-            is_class_name_candidate && data.len() >= 4 && &data[0..4] == b"\xCA\xFE\xBA\xBE";
-
-        let is_dead_class_candidate =
-            is_class_name_candidate && data.len() >= 2 && &data[0..2] != b"\xCA\xFE";
-
-        Ok(ResourceInfo {
-            path: original_path_str.to_string(),
-            size: data.len() as u64,
-            is_class_file: is_standard_class_file,
-            entropy: calculate_entropy(data),
-            is_dead_class_candidate,
-        })
-    }
-
-    fn scan_class_file_data(
+    pub(crate) fn scan_class_file_data(
         &self,
         original_path_str: &str,
         data: Vec<u8>,
@@ -677,7 +40,7 @@ impl CollapseScanner {
         Ok(result)
     }
 
-    fn scan_class_data(
+    pub fn scan_class_data(
         &self,
         data: &[u8],
         original_path_str: &str,
@@ -972,7 +335,7 @@ impl CollapseScanner {
         }
     }
 
-    fn extract_resource(&self, internal_path: &str, data: &[u8]) -> Result<(), ScanError> {
+    pub fn extract_resource(&self, internal_path: &str, data: &[u8]) -> Result<(), ScanError> {
         let (final_outpath, is_directory) = if internal_path.ends_with(".class/") {
             let file_path_str = internal_path.trim_end_matches('/');
             (self.options.output_dir.join(file_path_str), false)
@@ -986,10 +349,8 @@ impl CollapseScanner {
             if !p.exists() {
                 fs::create_dir_all(p)?;
             }
-        } else {
-            if !self.options.output_dir.exists() {
-                fs::create_dir_all(&self.options.output_dir)?;
-            }
+        } else if !self.options.output_dir.exists() {
+            fs::create_dir_all(&self.options.output_dir)?;
         }
 
         if is_directory {
@@ -1170,7 +531,7 @@ impl CollapseScanner {
         if let Some(webhooks) = by_type.get(&FindingType::DiscordWebhook) {
             if !webhooks.is_empty() {
                 explanations.push(format!(
-                    "⚠️ CRITICAL: Found {} Discord webhook(s)! These are extremely dangerous and commonly used for data exfiltration, logging stolen information, or remote control.",
+                    "CRITICAL: Found {} Discord webhook(s)! These are extremely dangerous and commonly used for data exfiltration, logging stolen information.",
                     webhooks.len()
                 ));
             }
@@ -1347,6 +708,67 @@ impl CollapseScanner {
             || self.options.mode == DetectionMode::All
         {
             self.check_name_obfuscation(class_details, findings);
+        }
+
+        let mut tokens_present: HashSet<&str> = HashSet::new();
+        for s in &class_details.strings {
+            match s.as_str() {
+                "Runtime" => {
+                    tokens_present.insert("Runtime");
+                }
+                "loadLibrary" => {
+                    tokens_present.insert("loadLibrary");
+                }
+                "ProcessBuilder" | "java/lang/ProcessBuilder" => {
+                    tokens_present.insert("ProcessBuilder");
+                }
+                "getMethod" => {
+                    tokens_present.insert("getMethod");
+                }
+                "invoke" => {
+                    tokens_present.insert("invoke");
+                }
+                "socket" | "connect" | "bind" => {
+                    tokens_present.insert(s);
+                }
+                _ => {}
+            }
+        }
+
+        if tokens_present.contains("Runtime") {
+            findings.push((
+                FindingType::SuspiciousKeyword,
+                "Runtime execution (Runtime)".to_string(),
+            ));
+        }
+
+        if tokens_present.contains("loadLibrary") {
+            findings.push((
+                FindingType::SuspiciousKeyword,
+                "Native library loading (loadLibrary)".to_string(),
+            ));
+        }
+        if tokens_present.contains("ProcessBuilder") {
+            findings.push((
+                FindingType::SuspiciousKeyword,
+                "ProcessBuilder usage".to_string(),
+            ));
+        }
+        if tokens_present.contains("getMethod") && tokens_present.contains("invoke") {
+            findings.push((
+                FindingType::SuspiciousKeyword,
+                "Reflection method invocation (getMethod + invoke)".to_string(),
+            ));
+        }
+        if (tokens_present.contains("socket")
+            || tokens_present.contains("bind")
+            || tokens_present.contains("connect"))
+            && self.options.mode != DetectionMode::Obfuscation
+        {
+            findings.push((
+                FindingType::SuspiciousKeyword,
+                "Low-level network API tokens (socket/bind/connect)".to_string(),
+            ));
         }
     }
 

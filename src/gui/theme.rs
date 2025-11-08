@@ -1,25 +1,28 @@
 use iced::widget::{button, container};
 use iced::{Background, Border, Color, Theme};
 
-pub const BG_COLOR: Color = Color::from_rgb(0.08, 0.08, 0.10);
-pub const SURFACE_COLOR: Color = Color::from_rgb(0.10, 0.10, 0.16);
-pub const CARD_COLOR: Color = Color::from_rgb(0.15, 0.15, 0.22);
-pub const BORDER_COLOR: Color = Color::from_rgb(0.25, 0.25, 0.30);
-pub const ACCENT_COLOR: Color = Color::from_rgb(0.3, 0.7, 1.0);
-pub const ACCENT_COLOR_MUTED: Color = Color::from_rgb(0.15, 0.35, 0.5);
-pub const ACCENT_MUTED: Color = Color::from_rgb(0.2, 0.5, 0.8);
-pub const SUCCESS_COLOR: Color = Color::from_rgb(0.2, 0.8, 0.4);
-pub const WARNING_COLOR: Color = Color::from_rgb(1.0, 0.8, 0.2);
-pub const ERROR_COLOR: Color = Color::from_rgb(1.0, 0.3, 0.3);
-pub const ERROR_COLOR_MUTED: Color = Color::from_rgb(0.8, 0.4, 0.4);
-pub const TEXT_PRIMARY: Color = Color::from_rgb(0.95, 0.95, 0.95);
-pub const TEXT_SECONDARY: Color = Color::from_rgb(0.7, 0.7, 0.7);
+pub const BG_COLOR: Color = Color::from_rgb(0.06, 0.06, 0.08);
+pub const SURFACE_COLOR: Color = Color::from_rgb(0.09, 0.10, 0.14);
+pub const CARD_COLOR: Color = Color::from_rgb(0.12, 0.13, 0.18);
+pub const BORDER_COLOR: Color = Color::from_rgb(0.20, 0.22, 0.28);
+pub const BORDER_HIGHLIGHT: Color = Color::from_rgb(0.30, 0.35, 0.45);
+
+pub const ACCENT_COLOR: Color = Color::from_rgb(0.25, 0.75, 1.0);
+pub const ACCENT_COLOR_MUTED: Color = Color::from_rgb(0.18, 0.40, 0.58);
+pub const ACCENT_HOVER: Color = Color::from_rgb(0.30, 0.82, 1.0);
+
+pub const WARNING_COLOR: Color = Color::from_rgb(1.0, 0.75, 0.15);
+pub const ERROR_COLOR: Color = Color::from_rgb(1.0, 0.35, 0.40);
+pub const ERROR_COLOR_MUTED: Color = Color::from_rgb(0.65, 0.25, 0.30);
+
+pub const TEXT_PRIMARY: Color = Color::from_rgb(0.96, 0.97, 0.98);
+pub const TEXT_SECONDARY: Color = Color::from_rgb(0.65, 0.68, 0.72);
 
 pub const DANGER_CRITICAL: Color = ERROR_COLOR;
 pub const DANGER_CRITICAL_MUTED: Color = ERROR_COLOR_MUTED;
-pub const DANGER_HIGH: Color = WARNING_COLOR;
-pub const DANGER_MEDIUM: Color = Color::from_rgb(1.0, 1.0, 0.3);
-pub const DANGER_LOW: Color = SUCCESS_COLOR;
+pub const DANGER_HIGH: Color = Color::from_rgb(1.0, 0.60, 0.20);
+pub const DANGER_MEDIUM: Color = WARNING_COLOR;
+pub const DANGER_LOW: Color = Color::from_rgb(0.40, 0.90, 0.60);
 
 pub fn container_style(_theme: &Theme) -> container::Style {
     container::Style {
@@ -34,62 +37,111 @@ pub fn card_style(_theme: &Theme) -> container::Style {
         background: Some(CARD_COLOR.into()),
         border: iced::Border {
             color: BORDER_COLOR,
-            width: 1.0,
-            radius: 8.0.into(),
+            width: 1.5,
+            radius: 12.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
         },
         ..Default::default()
     }
 }
 
-pub fn button_style(_theme: &Theme, _status: button::Status) -> button::Style {
+pub fn button_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let (bg_color, border_color) = match status {
+        button::Status::Hovered => (Color::from_rgb(0.12, 0.14, 0.20), BORDER_HIGHLIGHT),
+        button::Status::Pressed => (Color::from_rgb(0.08, 0.09, 0.13), ACCENT_COLOR),
+        _ => (SURFACE_COLOR, BORDER_COLOR),
+    };
+
     button::Style {
-        background: Some(SURFACE_COLOR.into()),
+        background: Some(bg_color.into()),
+        text_color: TEXT_PRIMARY,
+        border: iced::Border {
+            color: border_color,
+            width: 1.5,
+            radius: 8.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.2),
+            offset: iced::Vector::new(0.0, 2.0),
+            blur_radius: 4.0,
+        },
+        ..button::secondary(_theme, status)
+    }
+}
+
+pub fn primary_button_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let (bg_color, shadow_offset) = match status {
+        button::Status::Hovered => (ACCENT_HOVER, 3.0),
+        button::Status::Pressed => (ACCENT_COLOR_MUTED, 1.0),
+        _ => (ACCENT_COLOR, 2.0),
+    };
+
+    button::Style {
+        background: Some(bg_color.into()),
+        text_color: Color::WHITE,
+        border: iced::Border {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.0),
+            width: 0.0,
+            radius: 10.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.1, 0.4, 0.7, 0.4),
+            offset: iced::Vector::new(0.0, shadow_offset),
+            blur_radius: 8.0,
+        },
+        ..button::primary(_theme, status)
+    }
+}
+
+pub fn cancel_button_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let (bg_color, shadow_offset) = match status {
+        button::Status::Hovered => (Color::from_rgb(1.0, 0.40, 0.45), 3.0),
+        button::Status::Pressed => (DANGER_CRITICAL_MUTED, 1.0),
+        _ => (ERROR_COLOR, 2.0),
+    };
+
+    button::Style {
+        background: Some(bg_color.into()),
+        text_color: Color::WHITE,
+        border: iced::Border {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.0),
+            width: 0.0,
+            radius: 10.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.8, 0.2, 0.2, 0.4),
+            offset: iced::Vector::new(0.0, shadow_offset),
+            blur_radius: 8.0,
+        },
+        ..button::primary(_theme, status)
+    }
+}
+
+pub fn result_button_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let (bg_color, border_width) = match status {
+        button::Status::Hovered => (Color::from_rgb(0.14, 0.15, 0.21), 1.5),
+        button::Status::Pressed => (Color::from_rgb(0.10, 0.11, 0.16), 1.5),
+        _ => (SURFACE_COLOR, 1.0),
+    };
+
+    button::Style {
+        background: Some(bg_color.into()),
         text_color: TEXT_PRIMARY,
         border: iced::Border {
             color: BORDER_COLOR,
-            width: 1.0,
-            radius: 5.0.into(),
+            width: border_width,
+            radius: 8.0.into(),
         },
-        ..button::secondary(_theme, _status)
-    }
-}
-
-pub fn primary_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
-    button::Style {
-        background: Some(ACCENT_COLOR_MUTED.into()),
-        text_color: TEXT_PRIMARY,
-        border: iced::Border {
-            color: ACCENT_MUTED,
-            width: 2.0,
-            radius: 6.0.into(),
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+            offset: iced::Vector::new(0.0, 2.0),
+            blur_radius: 6.0,
         },
-        ..button::primary(_theme, _status)
-    }
-}
-
-pub fn cancel_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
-    button::Style {
-        background: Some(DANGER_CRITICAL_MUTED.into()),
-        text_color: TEXT_PRIMARY,
-        border: iced::Border {
-            color: Color::from_rgb(1.0, 0.3, 0.3),
-            width: 2.0,
-            radius: 6.0.into(),
-        },
-        ..button::primary(_theme, _status)
-    }
-}
-
-pub fn result_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
-    button::Style {
-        background: Some(SURFACE_COLOR.into()),
-        text_color: TEXT_PRIMARY,
-        border: iced::Border {
-            color: Color::from_rgb(0.3, 0.3, 0.4),
-            width: 1.0,
-            radius: 5.0.into(),
-        },
-        ..button::secondary(_theme, _status)
+        ..button::secondary(_theme, status)
     }
 }
 
@@ -135,5 +187,17 @@ pub fn danger_color(score: u8) -> Color {
         5..=7 => DANGER_HIGH,
         3..=4 => DANGER_MEDIUM,
         _ => DANGER_LOW,
+    }
+}
+
+pub fn progress_bar_style(_theme: &Theme) -> iced::widget::progress_bar::Style {
+    iced::widget::progress_bar::Style {
+        background: Background::Color(SURFACE_COLOR),
+        bar: Background::Color(ACCENT_COLOR),
+        border: Border {
+            radius: 8.0.into(),
+            width: 0.0,
+            color: Color::TRANSPARENT,
+        },
     }
 }

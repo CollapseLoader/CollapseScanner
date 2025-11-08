@@ -295,7 +295,7 @@ impl CollapseApp {
     }
 
     fn view_scan_tab(&self) -> Element<'_, Message> {
-        let title = text("CollapseScanner")
+        let title = text("CollapseScanner v".to_string() + env!("CARGO_PKG_VERSION"))
             .size(32)
             .style(|_theme: &Theme| text::Style {
                 color: Some(theme::ACCENT_COLOR),

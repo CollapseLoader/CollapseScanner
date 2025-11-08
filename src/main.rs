@@ -134,7 +134,8 @@ fn create_scanner_options(args: &Args) -> ScannerOptions {
         ignore_keywords_file: args.ignore_keywords.clone(),
         exclude_patterns: args.exclude.clone(),
         find_patterns: args.find.clone(),
-        max_file_size: args.max_file_size.map(|mb| mb * 1024 * 1024)
+        max_file_size: args.max_file_size.map(|mb| mb * 1024 * 1024),
+        progress: None,
     }
 }
 

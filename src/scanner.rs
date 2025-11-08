@@ -311,12 +311,25 @@ impl CollapseScanner {
             .par_iter()
             .with_max_len(100)
             .map(|path| {
+                // Check for cancellation
+                if let Some(ref prog_arc) = self.options.progress {
+                    if let Ok(gp) = prog_arc.lock() {
+                        if gp.cancelled {
+                            return Ok(Vec::new());
+                        }
+                    }
+                }
+
                 let result = self.scan_path(path);
 
                 let count = processed_count.fetch_add(1, Ordering::Relaxed);
                 // update shared progress if provided
                 if let Some(ref prog_arc) = self.options.progress {
                     if let Ok(mut gp) = prog_arc.lock() {
+                        if gp.cancelled {
+                            gp.message = "Scan cancelled".to_string();
+                            return Ok(Vec::new());
+                        }
                         gp.current = count + 1;
                         gp.total = scannable_files.len();
                         gp.message = format!("Scanning: {}", path.display());
@@ -474,13 +487,27 @@ impl CollapseScanner {
             .par_iter()
             .with_max_len(10)
             .map(|(original_entry_name, buffer)| {
-                let result = self.process_jar_entry(
+                // Check for cancellation
+                if let Some(ref prog_arc) = self.options.progress {
+                    if let Ok(gp) = prog_arc.lock() {
+                        if gp.cancelled {
+                            return Ok((None, ResourceInfo {
+                                path: original_entry_name.clone(),
+                                size: buffer.len() as u64,
+                                is_class_file: false,
+                                entropy: 0.0,
+                                is_dead_class_candidate: false,
+                            }));
+                        }
+                    }
+                }
+
+                self.process_jar_entry(
                     original_entry_name,
                     buffer,
                     &progress_bar,
                     &processed_count,
-                );
-                result
+                )
             })
             .collect();
 
@@ -592,13 +619,17 @@ impl CollapseScanner {
         // update shared progress if provided
         if let Some(ref prog_arc) = self.options.progress {
             if let Ok(mut gp) = prog_arc.lock() {
+                if gp.cancelled {
+                    gp.message = "Scan cancelled".to_string();
+                    return Ok((None, resource_info));
+                }
                 gp.current = count + 1;
                 // total is set earlier
                 gp.message = original_entry_name.to_string();
             }
         }
 
-        if count % 10 == 0 {
+        if count.is_multiple_of(10) {
             let pb_guard = progress_bar.lock().unwrap();
             pb_guard.inc(10);
             drop(pb_guard);
@@ -1099,8 +1130,8 @@ impl CollapseScanner {
             score_acc += 2;
         }
 
-        let final_score = (score_acc as i32).clamp(1, 10) as u8;
-        final_score
+        
+        (score_acc as i32).clamp(1, 10) as u8
     }
 
     fn generate_danger_explanation(
@@ -1121,23 +1152,23 @@ impl CollapseScanner {
 
         if score >= 8 {
             explanations.push(format!(
-            "{}HIGH RISK: This file contains multiple high-risk indicators!",
-            warn_prefix
+                "{}HIGH RISK: This file contains multiple high-risk indicators!",
+                warn_prefix
             ));
         } else if score >= 5 {
             explanations.push(format!(
-            "{}MODERATE RISK: This file contains several suspicious elements.",
-            warn_prefix
+                "{}MODERATE RISK: This file contains several suspicious elements.",
+                warn_prefix
             ));
         } else if score >= 3 {
             explanations.push(format!(
-            "{}LOW RISK: This file contains some potentially concerning elements.",
-            warn_prefix
+                "{}LOW RISK: This file contains some potentially concerning elements.",
+                warn_prefix
             ));
         } else {
             explanations.push(format!(
-            "{}MINIMAL RISK: Few or no concerning elements detected.",
-            ok_prefix
+                "{}MINIMAL RISK: Few or no concerning elements detected.",
+                ok_prefix
             ));
         }
 

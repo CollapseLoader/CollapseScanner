@@ -17,14 +17,17 @@ pub struct Progress {
     pub current: usize,
     pub total: usize,
     pub message: String,
+    pub cancelled: bool,
 }
 
+#[cfg(feature = "gui")]
 impl Progress {
     pub fn new() -> Self {
         Self {
             current: 0,
             total: 0,
             message: String::from("Ready to scan"),
+            cancelled: false,
         }
     }
 

@@ -45,7 +45,7 @@ colored = { version = "3.0.0", optional = true }
 clap = { version = "4.5.51", features = ["derive"], optional = true }
 
 # GUI dependencies (optional)
-iced = { version = "0.13", features = ["tokio"], optional = true }
+iced = { version = "0.13", features = ["tokio", "svg"], optional = true }
 rfd = { version = "0.15", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
 

@@ -6,6 +6,7 @@ pub enum AppState {
     Idle,
     Scanning,
     Completed,
+    Cancelled,
     Error(String),
 }
 

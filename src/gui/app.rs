@@ -14,6 +14,8 @@ use crate::scanner::CollapseScanner;
 use crate::types::{
     DetectionMode, FindingType, Progress as TypesProgress, ScanResult, ScannerOptions,
 };
+use serde_json;
+use std::fs;
 use std::sync::{Arc, Mutex};
 
 use super::message::Message;
@@ -21,6 +23,7 @@ use super::state::{AppState, ResultsUi, ScanProgress, ScanSettings};
 use super::theme;
 
 const SEVERITY_OPTIONS: [&str; 5] = ["All", "Low", "Medium", "High", "Critical"];
+const SORT_OPTIONS: [&str; 3] = ["Danger", "Path", "Findings"];
 
 pub struct CollapseApp {
     state: AppState,
@@ -157,6 +160,14 @@ impl CollapseApp {
                 self.results_ui.severity = label;
                 Task::none()
             }
+            Message::ResultsSortChanged(field) => {
+                self.results_ui.sort_field = field;
+                Task::none()
+            }
+            Message::ResultsSortDirectionToggled => {
+                self.results_ui.sort_asc = !self.results_ui.sort_asc;
+                Task::none()
+            }
 
             Message::CancelScan => {
                 self.state = AppState::Idle;
@@ -207,6 +218,29 @@ impl CollapseApp {
                 self.results.clear();
                 self.expanded_findings.clear();
                 self.state = AppState::Idle;
+                Task::none()
+            }
+            Message::ExportFilteredResults => {
+                let indices = self.build_filtered_results();
+                let export_data: Vec<ScanResult> = indices
+                    .into_iter()
+                    .map(|i| self.results[i].clone())
+                    .collect();
+                Task::future(async move {
+                    Message::ExportResultsCompleted(Self::perform_export(export_data).await)
+                })
+            }
+            Message::ExportResultsCompleted(res) => {
+                match res {
+                    Ok(()) => {
+                        if let Ok(mut pg) = self.progress.lock() {
+                            pg.message = "Exported filtered results".to_string();
+                        }
+                    }
+                    Err(e) => {
+                        self.state = AppState::Error(e);
+                    }
+                }
                 Task::none()
             }
             Message::ExpandFinding(index) => {
@@ -371,15 +405,11 @@ impl CollapseApp {
                     .iter()
                     .filter(|r| !r.matches.is_empty())
                     .count();
-                column![text(format!(
-                    "Scan completed: {} files scanned, {} with findings",
-                    self.results.len(),
-                    findings_count
-                ))
-                .size(14)
-                .style(|_theme: &Theme| text::Style {
-                    color: Some(Color::from_rgb(0.3, 1.0, 0.3)),
-                })]
+                column![text(format!("Scan completed: {} findings", findings_count))
+                    .size(14)
+                    .style(|_theme: &Theme| text::Style {
+                        color: Some(Color::from_rgb(0.3, 1.0, 0.3)),
+                    })]
             }
             AppState::Cancelled => {
                 column![text("Scan cancelled")
@@ -433,17 +463,36 @@ impl CollapseApp {
             pick_list(
                 &SEVERITY_OPTIONS[..],
                 Some(self.results_ui.severity),
-                Message::ResultsSeverityChanged
+                Message::ResultsSeverityChanged,
             )
             .padding(10)
             .width(Length::Fixed(140.0))
             .style(theme::pick_list_style)
             .menu_style(theme::pick_list_menu_style),
+            pick_list(
+                &SORT_OPTIONS[..],
+                Some(self.results_ui.sort_field),
+                Message::ResultsSortChanged,
+            )
+            .padding(10)
+            .width(Length::Fixed(140.0))
+            .style(theme::pick_list_style)
+            .menu_style(theme::pick_list_menu_style),
+            button(if self.results_ui.sort_asc {
+                "Asc"
+            } else {
+                "Desc"
+            })
+            .on_press(Message::ResultsSortDirectionToggled)
+            .style(theme::button_style),
+            button("Export")
+                .on_press(Message::ExportFilteredResults)
+                .style(theme::button_style),
             button("Clear")
                 .on_press(Message::ClearResults)
-                .style(theme::button_style)
+                .style(theme::button_style),
         ]
-        .spacing(10)
+        .spacing(8)
         .align_y(Alignment::Center);
 
         if self.results.is_empty() {
@@ -467,42 +516,9 @@ impl CollapseApp {
             .into();
         }
 
-        let base_results: Vec<&ScanResult> = self
-            .results
-            .iter()
-            .filter(|r| !r.matches.is_empty())
-            .collect();
-
-        let severity_min = match self.results_ui.severity {
-            "Low" => 1,
-            "Medium" => 4,
-            "High" => 7,
-            "Critical" => 9,
-            _ => 0,
-        };
-
-        let search = self.results_ui.search.to_lowercase();
-
-        let filtered_results: Vec<&ScanResult> = base_results
-            .into_iter()
-            .filter(|r| {
-                if r.danger_score < severity_min {
-                    return false;
-                }
-                if search.is_empty() {
-                    return true;
-                }
-                if r.file_path.to_lowercase().contains(&search) {
-                    return true;
-                }
-                for (_t, v) in &r.matches {
-                    if v.to_lowercase().contains(&search) {
-                        return true;
-                    }
-                }
-                false
-            })
-            .collect();
+        let filtered_indices = self.build_filtered_results();
+        let filtered_results: Vec<&ScanResult> =
+            filtered_indices.iter().map(|&i| &self.results[i]).collect();
 
         let mut findings_by_type: HashMap<FindingType, Vec<(&ScanResult, &String)>> =
             HashMap::new();
@@ -744,10 +760,16 @@ impl CollapseApp {
 
         let threads: usize = settings.threads.parse().unwrap_or(0);
         if threads > 0 {
-            rayon::ThreadPoolBuilder::new()
+            let res = rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
-                .build_global()
-                .map_err(|e| format!("Failed to configure threads: {}", e))?;
+                .build_global();
+            if let Err(e) = res {
+                let msg = format!("{}", e);
+                if msg.contains("already been initialized") || msg.contains("already initialized") {
+                } else {
+                    return Err(format!("Failed to configure threads: {}", e));
+                }
+            }
         }
 
         let scanner_options = ScannerOptions {
@@ -772,6 +794,94 @@ impl CollapseApp {
             .map_err(|e| format!("Scan failed: {}", e))?;
 
         Ok(results)
+    }
+
+    fn build_filtered_results(&self) -> Vec<usize> {
+        let severity_min = match self.results_ui.severity {
+            "Low" => 1,
+            "Medium" => 4,
+            "High" => 7,
+            "Critical" => 9,
+            _ => 0,
+        };
+
+        let search = self.results_ui.search.to_lowercase();
+
+        let mut indices: Vec<usize> = self
+            .results
+            .iter()
+            .enumerate()
+            .filter(|(_i, r)| !r.matches.is_empty())
+            .filter(|(_i, r)| {
+                if r.danger_score < severity_min {
+                    return false;
+                }
+                if search.is_empty() {
+                    return true;
+                }
+                if r.file_path.to_lowercase().contains(&search) {
+                    return true;
+                }
+                for (_t, v) in &r.matches {
+                    if v.to_lowercase().contains(&search) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        match self.results_ui.sort_field {
+            "Danger" => {
+                if self.results_ui.sort_asc {
+                    indices.sort_by_key(|&i| self.results[i].danger_score);
+                } else {
+                    indices.sort_by_key(|&i| std::u8::MAX - self.results[i].danger_score);
+                }
+            }
+            "Path" => {
+                if self.results_ui.sort_asc {
+                    indices.sort_by(|&a, &b| {
+                        self.results[a].file_path.cmp(&self.results[b].file_path)
+                    });
+                } else {
+                    indices.sort_by(|&a, &b| {
+                        self.results[b].file_path.cmp(&self.results[a].file_path)
+                    });
+                }
+            }
+            "Findings" => {
+                if self.results_ui.sort_asc {
+                    indices.sort_by_key(|&i| self.results[i].matches.len());
+                } else {
+                    indices.sort_by_key(|&i| std::usize::MAX - self.results[i].matches.len());
+                }
+            }
+            _ => {}
+        }
+
+        indices
+    }
+
+    async fn perform_export(results: Vec<ScanResult>) -> Result<(), String> {
+        let maybe_path = rfd::AsyncFileDialog::new()
+            .set_title("Save filtered results as...")
+            .set_file_name("results.json")
+            .save_file()
+            .await
+            .map(|p| p);
+
+        let json = serde_json::to_string_pretty(&results).map_err(|e| e.to_string())?;
+
+        if let Some(handle) = maybe_path {
+            let p = handle.path().to_path_buf();
+            fs::write(&p, json).map_err(|e| e.to_string())?;
+            Ok(())
+        } else {
+            fs::write("./exported_results.json", json).map_err(|e| e.to_string())?;
+            Ok(())
+        }
     }
 }
 

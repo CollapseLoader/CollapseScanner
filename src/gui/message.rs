@@ -32,4 +32,8 @@ pub enum Message {
     ExpandFinding(usize),
     ResultsSearchChanged(String),
     ResultsSeverityChanged(&'static str),
+    ResultsSortChanged(&'static str),
+    ResultsSortDirectionToggled,
+    ExportFilteredResults,
+    ExportResultsCompleted(Result<(), String>),
 }

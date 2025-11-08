@@ -49,6 +49,8 @@ impl Default for ScanSettings {
 pub struct ResultsUi {
     pub search: String,
     pub severity: &'static str,
+    pub sort_field: &'static str,
+    pub sort_asc: bool,
 }
 
 impl Default for ResultsUi {
@@ -56,6 +58,8 @@ impl Default for ResultsUi {
         Self {
             search: String::new(),
             severity: "All",
+            sort_field: "Danger",
+            sort_asc: false,
         }
     }
 }

@@ -296,7 +296,6 @@ impl CollapseScanner {
         progress.lock().unwrap().set_style(progress_style);
         progress.lock().unwrap().set_message("Analyzing files...");
 
-        // If GUI supplied a shared progress Arc, initialize it as well
         if let Some(ref prog_arc) = self.options.progress {
             if let Ok(mut gp) = prog_arc.lock() {
                 gp.total = scannable_files.len();
@@ -311,7 +310,6 @@ impl CollapseScanner {
             .par_iter()
             .with_max_len(100)
             .map(|path| {
-                // Check for cancellation
                 if let Some(ref prog_arc) = self.options.progress {
                     if let Ok(gp) = prog_arc.lock() {
                         if gp.cancelled {
@@ -323,7 +321,6 @@ impl CollapseScanner {
                 let result = self.scan_path(path);
 
                 let count = processed_count.fetch_add(1, Ordering::Relaxed);
-                // update shared progress if provided
                 if let Some(ref prog_arc) = self.options.progress {
                     if let Ok(mut gp) = prog_arc.lock() {
                         if gp.cancelled {
@@ -474,7 +471,6 @@ impl CollapseScanner {
 
         let processed_count = Arc::new(AtomicUsize::new(0));
 
-        // Initialize shared progress for GUI if present
         if let Some(ref prog_arc) = self.options.progress {
             if let Ok(mut gp) = prog_arc.lock() {
                 gp.total = file_data_vec.len();
@@ -487,27 +483,24 @@ impl CollapseScanner {
             .par_iter()
             .with_max_len(10)
             .map(|(original_entry_name, buffer)| {
-                // Check for cancellation
                 if let Some(ref prog_arc) = self.options.progress {
                     if let Ok(gp) = prog_arc.lock() {
                         if gp.cancelled {
-                            return Ok((None, ResourceInfo {
-                                path: original_entry_name.clone(),
-                                size: buffer.len() as u64,
-                                is_class_file: false,
-                                entropy: 0.0,
-                                is_dead_class_candidate: false,
-                            }));
+                            return Ok((
+                                None,
+                                ResourceInfo {
+                                    path: original_entry_name.clone(),
+                                    size: buffer.len() as u64,
+                                    is_class_file: false,
+                                    entropy: 0.0,
+                                    is_dead_class_candidate: false,
+                                },
+                            ));
                         }
                     }
                 }
 
-                self.process_jar_entry(
-                    original_entry_name,
-                    buffer,
-                    &progress_bar,
-                    &processed_count,
-                )
+                self.process_jar_entry(original_entry_name, buffer, &progress_bar, &processed_count)
             })
             .collect();
 
@@ -616,7 +609,6 @@ impl CollapseScanner {
         };
 
         let count = processed_count.fetch_add(1, Ordering::Relaxed);
-        // update shared progress if provided
         if let Some(ref prog_arc) = self.options.progress {
             if let Ok(mut gp) = prog_arc.lock() {
                 if gp.cancelled {
@@ -624,7 +616,6 @@ impl CollapseScanner {
                     return Ok((None, resource_info));
                 }
                 gp.current = count + 1;
-                // total is set earlier
                 gp.message = original_entry_name.to_string();
             }
         }
@@ -728,7 +719,6 @@ impl CollapseScanner {
     fn check_network_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
         if let Some(cap) = IP_REGEX.captures(string) {
             let ip_str = cap.get(0).unwrap().as_str().to_string();
-            // Skip known-good / unreachable IPs
             if is_known_good_ip(&ip_str) {
                 return;
             }
@@ -738,7 +728,6 @@ impl CollapseScanner {
 
         if let Some(cap) = IPV6_REGEX.captures(string) {
             let ip_str = cap.get(0).unwrap().as_str().to_string();
-            // Skip known-good / unreachable IPs
             if is_known_good_ip(&ip_str) {
                 return;
             }
@@ -754,7 +743,6 @@ impl CollapseScanner {
                 && !self.is_good_link(&domain)
                 && !self.is_suspicious_domain(&domain)
             {
-                // If the domain is an IP and it's known-good, skip it
                 if is_known_good_ip(&domain) {
                     return;
                 }
@@ -1130,7 +1118,6 @@ impl CollapseScanner {
             score_acc += 2;
         }
 
-        
         (score_acc as i32).clamp(1, 10) as u8
     }
 

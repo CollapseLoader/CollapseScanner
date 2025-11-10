@@ -16,10 +16,6 @@ pub type ScanProgress = Arc<Mutex<Progress>>;
 pub struct ScanSettings {
     pub path: String,
     pub mode: DetectionMode,
-    pub verbose: bool,
-    pub extract_strings: bool,
-    pub extract_resources: bool,
-    pub export_json: bool,
     pub threads: String,
     pub exclude_patterns: Vec<String>,
     pub find_patterns: Vec<String>,
@@ -32,10 +28,6 @@ impl Default for ScanSettings {
         Self {
             path: String::new(),
             mode: DetectionMode::All,
-            verbose: false,
-            extract_strings: false,
-            extract_resources: false,
-            export_json: false,
             threads: String::from("0"),
             exclude_patterns: Vec::new(),
             find_patterns: Vec::new(),

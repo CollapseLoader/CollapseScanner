@@ -7,30 +7,20 @@ mod scanner;
 mod types;
 mod utils;
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-use colored::Colorize;
-
 #[cfg(feature = "gui")]
 mod gui;
 
 #[cfg(all(feature = "cli", not(feature = "gui")))]
-use clap::Parser;
-
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-use std::collections::HashMap;
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-use std::fs::{self, File};
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-use std::io::{self, Write};
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-use std::path::{Path, PathBuf};
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-use walkdir::WalkDir;
-
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-use crate::scanner::scan::CollapseScanner;
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-use crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions};
+use {
+    crate::scanner::scan::CollapseScanner,
+    crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions},
+    clap::Parser,
+    colored::Colorize,
+    std::collections::HashMap,
+    std::io::{self},
+    std::path::{Path, PathBuf},
+    walkdir::WalkDir,
+};
 
 #[cfg(all(feature = "cli", not(feature = "gui")))]
 #[derive(Parser)]
@@ -120,20 +110,11 @@ fn print_banner() {
 #[cfg(all(feature = "cli", not(feature = "gui")))]
 fn create_scanner_options(args: &Args) -> ScannerOptions {
     ScannerOptions {
-        extract_strings: args.strings,
-        extract_resources: args.extract,
-        output_dir: args
-            .output
-            .clone()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| ScannerOptions::default().output_dir),
-        export_json: args.json,
         mode: args.mode,
         verbose: args.verbose,
         ignore_keywords_file: args.ignore_keywords.clone(),
         exclude_patterns: args.exclude.clone(),
         find_patterns: args.find.clone(),
-        max_file_size: args.max_file_size.map(|mb| mb * 1024 * 1024),
         progress: None,
     }
 }
@@ -169,19 +150,7 @@ fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(all(feature = "cli", not(feature = "gui")))]
-fn validate_and_prepare_path(
-    args: &Args,
-    options: &ScannerOptions,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if options.verbose
-        && (options.extract_resources || options.extract_strings || options.export_json)
-    {
-        println!(
-            "{} Using output directory: {}",
-            "➡️".cyan(),
-            options.output_dir.display()
-        );
-    }
+fn validate_and_prepare_path(args: &Args) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let path_arg = args.path.clone().unwrap_or_else(|| ".".to_string());
     let path = PathBuf::from(&path_arg);
     if !path.exists() {
@@ -197,19 +166,6 @@ fn validate_and_prepare_path(
         std::process::exit(1);
     }
 
-    if (options.extract_resources || options.extract_strings || options.export_json)
-        && !options.output_dir.exists()
-    {
-        if let Err(e) = fs::create_dir_all(&options.output_dir) {
-            eprintln!(
-                "{} Error: Failed to create output directory {}: {}",
-                "❌".red().bold(),
-                options.output_dir.display(),
-                e
-            );
-            std::process::exit(1);
-        }
-    }
     Ok(path)
 }
 
@@ -364,7 +320,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     configure_threading(&args)?;
 
     let scanner = CollapseScanner::new(options.clone())?;
-    let path = validate_and_prepare_path(&args, &options)?;
+    let path = validate_and_prepare_path(&args)?;
     print_scan_configuration(&path, &args, &scanner);
     println!(
         "\n{} {}",
@@ -378,9 +334,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         Ok(results) => {
             let significant_results: Vec<&ScanResult> = results
                 .iter()
-                .filter(|r| {
-                    !r.matches.is_empty() || scanner.options.export_json || scanner.options.verbose
-                })
+                .filter(|r| !r.matches.is_empty() || scanner.options.verbose)
                 .collect();
 
             if significant_results.is_empty() {
@@ -658,75 +612,6 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 println!(
                     "   {}",
                     "Files with unusual magic bytes detected. These may require custom JVM or ClassLoader.".yellow()
-                );
-            }
-
-            if scanner.options.export_json {
-                let json_output_path = scanner.options.output_dir.join(format!(
-                    "{}_scan_results.json",
-                    path.file_stem()
-                        .unwrap_or_else(|| std::ffi::OsStr::new("scan"))
-                        .to_string_lossy()
-                ));
-                let mut sorted_results = results;
-                sorted_results.sort_by_key(|r| r.file_path.clone());
-                let json_data = serde_json::to_string_pretty(&sorted_results)?;
-
-                match File::create(&json_output_path) {
-                    Ok(mut json_file) => {
-                        if let Err(e) = json_file.write_all(json_data.as_bytes()) {
-                            eprintln!(
-                                "{} Error writing JSON results to {}: {}",
-                                "⚠️".yellow(),
-                                json_output_path.display(),
-                                e
-                            );
-                        } else {
-                            println!("\n{} {}", "💾".green().bold(), "Export Complete:".green());
-                            println!(
-                                "   JSON results saved to: {}",
-                                json_output_path.display().to_string().bright_white()
-                            );
-                        }
-                    }
-                    Err(e) => eprintln!(
-                        "{} Error creating JSON results file {}: {}",
-                        "⚠️".yellow(),
-                        json_output_path.display(),
-                        e
-                    ),
-                }
-            }
-            if scanner.options.extract_resources {
-                println!(
-                    "\n{} {}",
-                    "📦".green().bold(),
-                    "Extraction Complete:".green()
-                );
-                println!(
-                    "   Resources extracted to: {}",
-                    scanner
-                        .options
-                        .output_dir
-                        .display()
-                        .to_string()
-                        .bright_white()
-                );
-            }
-            if scanner.options.extract_strings {
-                println!(
-                    "\n{} {}",
-                    "🔤".green().bold(),
-                    "Extraction Complete:".green()
-                );
-                println!(
-                    "   Strings extracted to: {}",
-                    scanner
-                        .options
-                        .output_dir
-                        .display()
-                        .to_string()
-                        .bright_white()
                 );
             }
         }

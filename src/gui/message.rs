@@ -9,10 +9,6 @@ pub enum Message {
     PathInputChanged(String),
 
     ModeChanged(DetectionMode),
-    VerboseToggled(bool),
-    ExtractStringsToggled(bool),
-    ExtractResourcesToggled(bool),
-    ExportJsonToggled(bool),
     ThreadsChanged(String),
 
     ExcludePatternChanged(String),

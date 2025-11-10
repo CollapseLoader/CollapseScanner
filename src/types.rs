@@ -164,32 +164,22 @@ impl std::fmt::Display for DetectionMode {
 
 #[derive(Clone)]
 pub struct ScannerOptions {
-    pub extract_strings: bool,
-    pub extract_resources: bool,
-    pub output_dir: PathBuf,
-    pub export_json: bool,
     pub mode: DetectionMode,
     pub verbose: bool,
     pub ignore_keywords_file: Option<PathBuf>,
     pub exclude_patterns: Vec<String>,
     pub find_patterns: Vec<String>,
-    pub max_file_size: Option<usize>,
     pub progress: Option<Arc<Mutex<Progress>>>,
 }
 
 impl Default for ScannerOptions {
     fn default() -> Self {
         ScannerOptions {
-            extract_strings: false,
-            extract_resources: false,
-            output_dir: PathBuf::from("./extracted"),
-            export_json: false,
             mode: DetectionMode::All,
             verbose: false,
             ignore_keywords_file: None,
             exclude_patterns: Vec::new(),
             find_patterns: Vec::new(),
-            max_file_size: None,
             progress: None,
         }
     }

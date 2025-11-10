@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use iced::time;
 use iced::widget::{
-    button, checkbox, column, container, horizontal_space, pick_list, progress_bar, row,
-    scrollable, svg, text, text_input, vertical_space, Column, Svg,
+    button, column, container, horizontal_space, pick_list, progress_bar, row, scrollable, svg,
+    text, text_input, vertical_space, Column, Svg,
 };
 use iced::{Alignment, Color, Element, Length, Subscription, Task, Theme};
 use std::time::Duration;
@@ -75,22 +75,6 @@ impl CollapseApp {
             }
             Message::ModeChanged(mode) => {
                 self.settings.mode = mode;
-                Task::none()
-            }
-            Message::VerboseToggled(value) => {
-                self.settings.verbose = value;
-                Task::none()
-            }
-            Message::ExtractStringsToggled(value) => {
-                self.settings.extract_strings = value;
-                Task::none()
-            }
-            Message::ExtractResourcesToggled(value) => {
-                self.settings.extract_resources = value;
-                Task::none()
-            }
-            Message::ExportJsonToggled(value) => {
-                self.settings.export_json = value;
                 Task::none()
             }
             Message::ThreadsChanged(value) => {
@@ -206,10 +190,7 @@ impl CollapseApp {
                 }
                 Task::none()
             }
-            Message::Tick => {
-                if matches!(self.state, AppState::Scanning) {}
-                Task::none()
-            }
+            Message::Tick => Task::none(),
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
                 Task::none()
@@ -340,17 +321,6 @@ impl CollapseApp {
         .spacing(12)
         .align_y(Alignment::Center);
 
-        let quick_options = column![
-            checkbox("Verbose output", self.settings.verbose).on_toggle(Message::VerboseToggled),
-            checkbox("Extract strings", self.settings.extract_strings)
-                .on_toggle(Message::ExtractStringsToggled),
-            checkbox("Extract resources", self.settings.extract_resources)
-                .on_toggle(Message::ExtractResourcesToggled),
-            checkbox("Export JSON", self.settings.export_json)
-                .on_toggle(Message::ExportJsonToggled),
-        ]
-        .spacing(8);
-
         let scan_button = match self.state {
             AppState::Scanning => button("Cancel Scan")
                 .on_press(Message::CancelScan)
@@ -453,8 +423,6 @@ impl CollapseApp {
                 path_row,
                 vertical_space().height(20),
                 mode_picker,
-                vertical_space().height(20),
-                quick_options,
                 vertical_space().height(25),
                 scan_button,
                 vertical_space().height(15),
@@ -836,17 +804,12 @@ impl CollapseApp {
         }
 
         let scanner_options = ScannerOptions {
-            extract_strings: settings.extract_strings,
-            extract_resources: settings.extract_resources,
-            output_dir: PathBuf::from("./extracted"),
-            export_json: settings.export_json,
             mode: settings.mode,
-            verbose: settings.verbose,
             ignore_keywords_file: None,
             exclude_patterns: settings.exclude_patterns,
             find_patterns: settings.find_patterns,
-            max_file_size: None,
             progress: Some(progress.clone()),
+            verbose: false,
         };
 
         let scanner = CollapseScanner::new(scanner_options)
@@ -900,7 +863,7 @@ impl CollapseApp {
                 if self.results_ui.sort_asc {
                     indices.sort_by_key(|&i| self.results[i].danger_score);
                 } else {
-                    indices.sort_by_key(|&i| std::u8::MAX - self.results[i].danger_score);
+                    indices.sort_by_key(|&i| u8::MAX - self.results[i].danger_score);
                 }
             }
             "Path" => {
@@ -918,7 +881,7 @@ impl CollapseApp {
                 if self.results_ui.sort_asc {
                     indices.sort_by_key(|&i| self.results[i].matches.len());
                 } else {
-                    indices.sort_by_key(|&i| std::usize::MAX - self.results[i].matches.len());
+                    indices.sort_by_key(|&i| usize::MAX - self.results[i].matches.len());
                 }
             }
             _ => {}
@@ -932,8 +895,7 @@ impl CollapseApp {
             .set_title("Save filtered results as...")
             .set_file_name("results.json")
             .save_file()
-            .await
-            .map(|p| p);
+            .await;
 
         let json = serde_json::to_string_pretty(&results).map_err(|e| e.to_string())?;
 
@@ -970,7 +932,7 @@ fn tab_button<'a>(
     button(content)
         .on_press(Message::TabSelected(index))
         .padding(12)
-        .style(move |theme: &Theme, status| {
+        .style(move |_theme: &Theme, status| {
             if is_active {
                 let hover_boost = matches!(status, button::Status::Hovered);
                 button::Style {
@@ -986,7 +948,6 @@ fn tab_button<'a>(
                         offset: iced::Vector::new(0.0, if hover_boost { 3.0 } else { 2.0 }),
                         blur_radius: 10.0,
                     },
-                    ..button::primary(theme, status)
                 }
             } else {
                 let (bg_color, border_color) = match status {
@@ -1006,7 +967,6 @@ fn tab_button<'a>(
                         offset: iced::Vector::new(0.0, 1.0),
                         blur_radius: 4.0,
                     },
-                    ..button::secondary(theme, status)
                 }
             }
         })

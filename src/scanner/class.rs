@@ -1,6 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::{self, Write};
 
 use colored::Colorize;
 
@@ -73,8 +71,6 @@ impl CollapseScanner {
         self.scan_strings_by_mode(&strings_to_scan, &mut findings);
 
         self.cache_findings_new(data_hash, &findings);
-
-        self.handle_extraction(&class_details, original_path_str)?;
 
         self.create_scan_result(findings, class_details, original_path_str, resource_info)
     }
@@ -335,95 +331,6 @@ impl CollapseScanner {
         }
     }
 
-    pub fn extract_resource(&self, internal_path: &str, data: &[u8]) -> Result<(), ScanError> {
-        let (final_outpath, is_directory) = if internal_path.ends_with(".class/") {
-            let file_path_str = internal_path.trim_end_matches('/');
-            (self.options.output_dir.join(file_path_str), false)
-        } else if internal_path.ends_with('/') {
-            (self.options.output_dir.join(internal_path), true)
-        } else {
-            (self.options.output_dir.join(internal_path), false)
-        };
-
-        if let Some(p) = final_outpath.parent() {
-            if !p.exists() {
-                fs::create_dir_all(p)?;
-            }
-        } else if !self.options.output_dir.exists() {
-            fs::create_dir_all(&self.options.output_dir)?;
-        }
-
-        if is_directory {
-            fs::create_dir_all(&final_outpath)?;
-            Ok(())
-        } else {
-            match File::create(&final_outpath) {
-                Ok(mut outfile) => {
-                    if let Err(e) = outfile.write_all(data) {
-                        eprintln!(
-                            "{} Error writing extracted file {}: {}",
-                            "⚠️".yellow(),
-                            final_outpath.display(),
-                            e
-                        );
-                        return Err(ScanError::IoError(io::Error::new(
-                            io::ErrorKind::WriteZero,
-                            e,
-                        )));
-                    }
-                    Ok(())
-                }
-                Err(e) => {
-                    eprintln!(
-                        "{} Error creating extracted file {}: {}",
-                        "⚠️".yellow(),
-                        final_outpath.display(),
-                        e
-                    );
-                    Err(ScanError::IoError(e))
-                }
-            }
-        }
-    }
-
-    fn write_strings_to_file(
-        &self,
-        original_path_str: &str,
-        strings: &[String],
-    ) -> Result<(), io::Error> {
-        let safe_base_name = original_path_str.replace(
-            |c: char| c == '/' || c == '\\' || !c.is_ascii_alphanumeric() && c != '.',
-            "_",
-        );
-        let strings_path = self
-            .options
-            .output_dir
-            .join(format!("{}_strings.txt", safe_base_name));
-
-        if let Some(parent) = strings_path.parent() {
-            fs::create_dir_all(parent)?;
-        } else if !self.options.output_dir.exists() {
-            fs::create_dir_all(&self.options.output_dir)?;
-        }
-
-        let file = File::create(&strings_path)?;
-        let mut writer = io::BufWriter::new(file);
-
-        for string in strings {
-            if !string.is_empty() {
-                if let Err(e) = writeln!(writer, "{}", string) {
-                    eprintln!(
-                        "{} Error writing string to {}: {}",
-                        "⚠️".yellow(),
-                        strings_path.display(),
-                        e
-                    );
-                }
-            }
-        }
-        Ok(())
-    }
-
     fn calculate_danger_score(
         &self,
         findings: &[(FindingType, String)],
@@ -625,7 +532,7 @@ impl CollapseScanner {
         original_path_str: &str,
         resource_info: Option<ResourceInfo>,
     ) -> Result<Option<ScanResult>, ScanError> {
-        if !cached_findings.is_empty() || self.options.verbose || self.options.export_json {
+        if !cached_findings.is_empty() || self.options.verbose {
             let danger_score = self.calculate_danger_score(cached_findings, resource_info.as_ref());
             let danger_explanation = self.generate_danger_explanation(
                 danger_score,
@@ -665,7 +572,7 @@ impl CollapseScanner {
 
         self.cache_findings_new(data_hash, findings);
 
-        if !findings.is_empty() || self.options.verbose || self.options.export_json {
+        if !findings.is_empty() || self.options.verbose {
             let danger_score = self.calculate_danger_score(findings, resource_info.as_ref());
             let danger_explanation =
                 self.generate_danger_explanation(danger_score, findings, resource_info.as_ref());
@@ -710,59 +617,45 @@ impl CollapseScanner {
             self.check_name_obfuscation(class_details, findings);
         }
 
-        let mut tokens_present: HashSet<&str> = HashSet::new();
-        for s in &class_details.strings {
-            match s.as_str() {
-                "Runtime" => {
-                    tokens_present.insert("Runtime");
-                }
-                "loadLibrary" => {
-                    tokens_present.insert("loadLibrary");
-                }
-                "ProcessBuilder" | "java/lang/ProcessBuilder" => {
-                    tokens_present.insert("ProcessBuilder");
-                }
-                "getMethod" => {
-                    tokens_present.insert("getMethod");
-                }
-                "invoke" => {
-                    tokens_present.insert("invoke");
-                }
-                "socket" | "connect" | "bind" => {
-                    tokens_present.insert(s);
-                }
-                _ => {}
-            }
-        }
+        let string_set: HashSet<&String> = class_details.strings.iter().collect();
 
-        if tokens_present.contains("Runtime") {
+        println!("{:?}", string_set);
+
+        if string_set.contains(&"Runtime".to_string()) {
             findings.push((
                 FindingType::SuspiciousKeyword,
                 "Runtime execution (Runtime)".to_string(),
             ));
         }
 
-        if tokens_present.contains("loadLibrary") {
+        if string_set.contains(&"loadLibrary".to_string()) {
             findings.push((
                 FindingType::SuspiciousKeyword,
                 "Native library loading (loadLibrary)".to_string(),
             ));
         }
-        if tokens_present.contains("ProcessBuilder") {
+
+        if string_set.contains(&"ProcessBuilder".to_string())
+            || string_set.contains(&"java/lang/ProcessBuilder".to_string())
+        {
             findings.push((
                 FindingType::SuspiciousKeyword,
                 "ProcessBuilder usage".to_string(),
             ));
         }
-        if tokens_present.contains("getMethod") && tokens_present.contains("invoke") {
+
+        if string_set.contains(&"getMethod".to_string())
+            && string_set.contains(&"invoke".to_string())
+        {
             findings.push((
                 FindingType::SuspiciousKeyword,
                 "Reflection method invocation (getMethod + invoke)".to_string(),
             ));
         }
-        if (tokens_present.contains("socket")
-            || tokens_present.contains("bind")
-            || tokens_present.contains("connect"))
+
+        if (string_set.contains(&"socket".to_string())
+            || string_set.contains(&"bind".to_string())
+            || string_set.contains(&"connect".to_string()))
             && self.options.mode != DetectionMode::Obfuscation
         {
             findings.push((
@@ -770,6 +663,8 @@ impl CollapseScanner {
                 "Low-level network API tokens (socket/bind/connect)".to_string(),
             ));
         }
+
+        drop(string_set);
     }
 
     fn prepare_strings_for_scanning<'a>(&self, class_details: &'a ClassDetails) -> Vec<&'a String> {
@@ -837,24 +732,6 @@ impl CollapseScanner {
         }
     }
 
-    fn handle_extraction(
-        &self,
-        class_details: &ClassDetails,
-        original_path_str: &str,
-    ) -> Result<(), ScanError> {
-        if self.options.extract_strings && !class_details.strings.is_empty() {
-            if self.options.verbose {
-                println!(
-                    "      {} Extracting {} strings to file",
-                    "💾".dimmed(),
-                    class_details.strings.len()
-                );
-            }
-            self.write_strings_to_file(original_path_str, &class_details.strings)?;
-        }
-        Ok(())
-    }
-
     fn create_scan_result(
         &self,
         findings: Vec<(FindingType, String)>,
@@ -862,7 +739,7 @@ impl CollapseScanner {
         original_path_str: &str,
         resource_info: Option<ResourceInfo>,
     ) -> Result<Option<ScanResult>, ScanError> {
-        if !findings.is_empty() || self.options.verbose || self.options.export_json {
+        if !findings.is_empty() || self.options.verbose {
             let danger_score = self.calculate_danger_score(&findings, resource_info.as_ref());
             let danger_explanation =
                 self.generate_danger_explanation(danger_score, &findings, resource_info.as_ref());

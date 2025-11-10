@@ -24,11 +24,6 @@ impl CollapseScanner {
         let total_files = archive.len();
         let mut skipped_count = 0;
         let mut results = Vec::new();
-        let mut all_resource_info = if self.options.export_json {
-            Vec::with_capacity(total_files)
-        } else {
-            Vec::new()
-        };
 
         if self.options.verbose {
             println!("{} Scanning JAR file: {}", "🔎".blue(), jar_path.display());
@@ -138,17 +133,10 @@ impl CollapseScanner {
 
         for scan_result in scan_results {
             match scan_result {
-                Ok((Some(scan_result), resource_info)) => {
+                Ok((Some(scan_result), _)) => {
                     results.push(scan_result);
-                    if self.options.export_json {
-                        all_resource_info.push(resource_info);
-                    }
                 }
-                Ok((None, resource_info)) => {
-                    if self.options.export_json {
-                        all_resource_info.push(resource_info);
-                    }
-                }
+                Ok((None, _)) => {}
                 Err(e) => {
                     eprintln!("{} Error processing JAR entry: {}", "⚠️ ".yellow(), e);
                 }
@@ -167,36 +155,6 @@ impl CollapseScanner {
                 gp.current = gp.total;
                 gp.message = format!("Finished processing {} files", file_data_vec.len());
             }
-        }
-
-        if self.options.export_json && !all_resource_info.is_empty() {
-            let resources_json_path = self.options.output_dir.join(format!(
-                "{}_resources.json",
-                jar_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .replace(".jar", "")
-            ));
-            let json = serde_json::to_string_pretty(&all_resource_info)?;
-            match File::create(&resources_json_path) {
-                Ok(mut json_file) => {
-                    if let Err(e) = std::io::Write::write_all(&mut json_file, json.as_bytes()) {
-                        eprintln!(
-                            "{} Error writing resources JSON to {}: {}",
-                            "⚠️".yellow(),
-                            resources_json_path.display(),
-                            e
-                        );
-                    }
-                }
-                Err(e) => eprintln!(
-                    "{} Error creating resources JSON file {}: {}",
-                    "⚠️".yellow(),
-                    resources_json_path.display(),
-                    e
-                ),
-            };
         }
 
         if self.options.verbose {
@@ -220,17 +178,6 @@ impl CollapseScanner {
         let pb_guard = progress_bar.lock().unwrap();
         pb_guard.set_message(original_entry_name.to_string());
         drop(pb_guard);
-
-        if self.options.extract_resources {
-            if let Err(e) = self.extract_resource(original_entry_name, buffer) {
-                eprintln!(
-                    "{} Error during extraction of {}: {}",
-                    "⚠️ ".yellow(),
-                    original_entry_name,
-                    e
-                );
-            }
-        }
 
         let resource_info = self.analyze_resource(original_entry_name, buffer)?;
 

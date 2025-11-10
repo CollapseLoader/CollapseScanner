@@ -28,10 +28,6 @@ impl CollapseScanner {
     pub fn new(options: ScannerOptions) -> Result<Self, ScanError> {
         let good_links: HashSet<String> = GOOD_LINKS.iter().cloned().collect();
 
-        if options.extract_resources || options.extract_strings || options.export_json {
-            std::fs::create_dir_all(&options.output_dir)?;
-        }
-
         let mut ignored_suspicious_keywords: HashSet<String> = HashSet::new();
 
         if let Some(ref path) = options.ignore_keywords_file {

@@ -69,7 +69,6 @@ pub fn button_style(_theme: &Theme, status: button::Status) -> button::Style {
             offset: iced::Vector::new(0.0, 2.0),
             blur_radius: 4.0,
         },
-        ..button::secondary(_theme, status)
     }
 }
 
@@ -93,7 +92,6 @@ pub fn primary_button_style(_theme: &Theme, status: button::Status) -> button::S
             offset: iced::Vector::new(0.0, shadow_offset),
             blur_radius: 8.0,
         },
-        ..button::primary(_theme, status)
     }
 }
 
@@ -117,7 +115,6 @@ pub fn cancel_button_style(_theme: &Theme, status: button::Status) -> button::St
             offset: iced::Vector::new(0.0, shadow_offset),
             blur_radius: 8.0,
         },
-        ..button::primary(_theme, status)
     }
 }
 
@@ -141,7 +138,6 @@ pub fn result_button_style(_theme: &Theme, status: button::Status) -> button::St
             offset: iced::Vector::new(0.0, 2.0),
             blur_radius: 6.0,
         },
-        ..button::secondary(_theme, status)
     }
 }
 

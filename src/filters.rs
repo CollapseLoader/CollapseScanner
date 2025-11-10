@@ -59,6 +59,7 @@ lazy_static::lazy_static! {
         "yaml.org".to_string(),
         "openssl.org".to_string(),
         "yggdrasil-auth-session-staging.mojang.zone".to_string(),
+        "slf4j.org".to_string(),
     ];
 
     /// Known "good" / unreachable / reserved IPs and ranges

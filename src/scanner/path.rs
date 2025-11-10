@@ -63,23 +63,6 @@ impl CollapseScanner {
     }
 
     pub fn scan_path(&self, path: &Path) -> Result<Vec<ScanResult>, ScanError> {
-        if let Some(max_size) = self.options.max_file_size {
-            if let Ok(metadata) = path.metadata() {
-                if metadata.len() > max_size as u64 {
-                    if self.options.verbose {
-                        println!(
-                            "{} Skipping large file: {} ({} MB > {} MB)",
-                            "🚫".dimmed(),
-                            path.display(),
-                            metadata.len() / (1024 * 1024),
-                            max_size / (1024 * 1024)
-                        );
-                    }
-                    return Ok(Vec::new());
-                }
-            }
-        }
-
         if path.is_dir() {
             self.scan_directory(path)
         } else if path.extension().is_some_and(|ext| ext == "jar") {

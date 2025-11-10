@@ -619,8 +619,6 @@ impl CollapseScanner {
 
         let string_set: HashSet<&String> = class_details.strings.iter().collect();
 
-        println!("{:?}", string_set);
-
         if string_set.contains(&"Runtime".to_string()) {
             findings.push((
                 FindingType::SuspiciousKeyword,

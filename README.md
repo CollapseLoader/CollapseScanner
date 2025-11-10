@@ -80,21 +80,27 @@ collapsescanner file.jar --ignore_keywords ignore_keywords.txt
 
 ## 🔍 Command-line Options
 
-| Option              | Description                                                                         |
-| ------------------- | ----------------------------------------------------------------------------------- |
-| `path`              | Path to a JAR file, class file, or directory to scan                                |
-| `--mode`            | Detection mode: `network`, `malicious`, `obfuscation`, or `all` (default)           |
-| `--extract`         | Extract all resources from JAR files                                                |
-| `--strings`         | Extract all strings from class files                                                |
-| `--output`          | Specify the output directory (default: ./extracted)                                 |
-| `--json`            | Export results in JSON format                                                       |
-| `-v, --verbose`     | Enable verbose output (shows size/entropy, etc.)                                    |
-| `--threads`         | Number of threads to use for parallel processing (0 = automatic based on CPU cores) |
-| `--exclude`         | Exclude paths matching the wildcard pattern (can be used multiple times)            |
-| `--find`            | Only scan paths matching the wildcard pattern (can be used multiple times)          |
-| `--ignore_keywords` | Path to a .txt file with keywords to ignore (one per line)                          |
-| `--show`            | Print a detailed findings report to the terminal (useful for interactive runs)      |
-| `--max_file_size`   | Maximum file size to scan (in MB). Files larger than this will be skipped.          |
+| Option                         | Description                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------------- |
+| `path`                         | Path to a JAR file, class file, or directory to scan                                |
+| `--mode`                       | Detection mode: `network`, `malicious`, `obfuscation`, or `all` (default)           |
+| `--extract`                    | Extract all resources from JAR files                                                |
+| `--strings`                    | Extract all strings from class files                                                |
+| `--output`                     | Specify the output directory (default: ./extracted)                                 |
+| `--json`                       | Export results in JSON format                                                       |
+| `-v, --verbose`                | Enable verbose output (shows size/entropy, etc.)                                    |
+| `--threads`                    | Number of threads to use for parallel processing (0 = automatic based on CPU cores) |
+| `--exclude`                    | Exclude paths matching the wildcard pattern (can be used multiple times)            |
+| `--find`                       | Only scan paths matching the wildcard pattern (can be used multiple times)          |
+| `--ignore_keywords`            | Path to a .txt file with keywords to ignore (one per line)                          |
+| `--buffer-size-mb`             | Override the IO buffer size in MB (auto-selected by available memory if unset)      |
+| `--result-cache-size`          | Override the result cache entries (auto if unset)                                   |
+| `--safe-string-cache-capacity` | Override the string cache capacity (entries)                                        |
+| `--parallel-scanning`          | Force-enable parallel scanning (overrides automatic decision)                       |
+| `--no-parallel-scanning`       | Force-disable parallel scanning (explicitly disable)                                |
+| `--available-memory-mb`        | Override detected available memory (MB) for tuning/testing                          |
+| `--show`                       | Print a detailed findings report to the terminal (useful for interactive runs)      |
+| `--max_file_size`              | Maximum file size to scan (in MB). Files larger than this will be skipped.          |
 
 ## 🛡️ Detection Capabilities
 

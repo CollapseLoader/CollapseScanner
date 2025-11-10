@@ -3,9 +3,9 @@ use std::collections::HashSet;
 pub const ENTROPY_THRESHOLD: f64 = 7.2;
 
 lazy_static::lazy_static! {
-    pub static ref SAFE_STRING_CACHE: std::sync::Mutex<lru::LruCache<String, ()>> = {
-        let capacity = crate::config::SYSTEM_CONFIG.safe_string_cache_capacity;
-        std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(capacity).unwrap()))
+    pub static ref SAFE_STRING_CACHE: moka::sync::Cache<String, ()> = {
+        let capacity = crate::config::SYSTEM_CONFIG.safe_string_cache_capacity as u64;
+        moka::sync::Cache::builder().max_capacity(capacity).build()
     };
 
     pub static ref SAFE_STRING_BLOOM: std::sync::Mutex<bloomfilter::Bloom<String>> = {
@@ -33,10 +33,7 @@ pub fn is_cached_safe_string(s: &str) -> bool {
         }
     }
 
-    if let Ok(cache) = SAFE_STRING_CACHE.lock() {
-        return cache.contains(s);
-    }
-    false
+    SAFE_STRING_CACHE.get(s).is_some()
 }
 
 pub fn cache_safe_string(s: &str) -> bool {
@@ -46,11 +43,8 @@ pub fn cache_safe_string(s: &str) -> bool {
         bloom.set(&string_owned);
     }
 
-    if let Ok(mut cache) = SAFE_STRING_CACHE.lock() {
-        cache.put(string_owned, ());
-        return true;
-    }
-    false
+    SAFE_STRING_CACHE.insert(string_owned, ());
+    true
 }
 
 pub fn calculate_detection_hash(data: &[u8]) -> u64 {

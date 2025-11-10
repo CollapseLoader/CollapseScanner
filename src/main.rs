@@ -41,6 +41,21 @@ struct Args {
     #[clap(short, long, action = clap::ArgAction::SetTrue)]
     verbose: bool,
 
+    #[clap(long, value_parser)]
+    buffer_size_mb: Option<usize>,
+
+    #[clap(long, value_parser)]
+    result_cache_size: Option<usize>,
+
+    #[clap(long, value_parser)]
+    safe_string_cache_capacity: Option<usize>,
+
+    #[clap(long, action = clap::ArgAction::SetTrue)]
+    parallel_scanning: bool,
+
+    #[clap(long, action = clap::ArgAction::SetTrue)]
+    no_parallel_scanning: bool,
+
     #[clap(long)]
     strings: bool,
 
@@ -67,6 +82,9 @@ struct Args {
 
     #[clap(long, value_parser, default_value_t = 0)]
     threads: usize,
+
+    #[clap(long, value_parser)]
+    available_memory_mb: Option<usize>,
 
     #[clap(long, value_parser)]
     max_file_size: Option<usize>,
@@ -116,6 +134,32 @@ fn create_scanner_options(args: &Args) -> ScannerOptions {
         exclude_patterns: args.exclude.clone(),
         find_patterns: args.find.clone(),
         progress: None,
+    }
+}
+
+fn apply_env_overrides(args: &Args) {
+    if let Some(mb) = args.buffer_size_mb {
+        std::env::set_var("COLLAPSE_BUFFER_SIZE_MB", mb.to_string());
+    }
+
+    if let Some(size) = args.result_cache_size {
+        std::env::set_var("COLLAPSE_RESULT_CACHE_SIZE", size.to_string());
+    }
+
+    if let Some(cap) = args.safe_string_cache_capacity {
+        std::env::set_var("COLLAPSE_STRING_CACHE_CAPACITY", cap.to_string());
+    }
+
+    if args.parallel_scanning {
+        std::env::set_var("COLLAPSE_PARALLEL_SCANNING", "1");
+    }
+
+    if args.no_parallel_scanning {
+        std::env::set_var("COLLAPSE_PARALLEL_SCANNING", "0");
+    }
+
+    if let Some(mb) = args.available_memory_mb {
+        std::env::set_var("COLLAPSE_AVAILABLE_MEMORY_OVERRIDE_MB", mb.to_string());
     }
 }
 
@@ -313,6 +357,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(all(feature = "cli", not(feature = "gui")))]
 fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    apply_env_overrides(&args);
     let options = create_scanner_options(&args);
 
     print_banner();

@@ -1,7 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use colored::Colorize;
-
 use crate::detection::{
     cache_safe_string, calculate_detection_hash, is_cached_safe_string, ENTROPY_THRESHOLD,
 };
@@ -293,16 +291,14 @@ impl CollapseScanner {
     }
 
     fn get_cached_findings(&self, hash: u64) -> Option<Vec<(FindingType, String)>> {
-        if let Ok(mut cache) = self.result_cache.lock() {
-            return cache.get(&hash).cloned();
+        match self.result_cache.get(&hash) {
+            Some(v) => Some(v.clone()),
+            None => None,
         }
-        None
     }
 
     fn cache_findings_new(&self, hash: u64, findings: &[(FindingType, String)]) {
-        if let Ok(mut cache) = self.result_cache.lock() {
-            cache.put(hash, findings.to_vec());
-        }
+        self.result_cache.insert(hash, findings.to_vec());
     }
 
     fn check_high_entropy(
@@ -669,32 +665,9 @@ impl CollapseScanner {
         let strings_to_scan = class_details
             .strings
             .iter()
-            .filter(|s| {
-                !s.is_empty()
-                    && s.len() >= 3
-                    && s.len() <= 200
-                    && !is_cached_safe_string(s)
-                    && (s.contains('/')
-                        || s.contains('.')
-                        || s.contains(':')
-                        || s.contains('@')
-                        || s.contains('(')
-                        || s.contains(')')
-                        || s.contains('[')
-                        || s.contains(']')
-                        || s.contains('{')
-                        || s.contains('}'))
-            })
+            .filter(|s| !s.is_empty() && s.len() >= 3 && !is_cached_safe_string(s))
             .take(100)
             .collect::<Vec<_>>();
-
-        if self.options.verbose && !strings_to_scan.is_empty() {
-            println!(
-                "      {} Analyzing {} strings in class",
-                "🔤".dimmed(),
-                strings_to_scan.len()
-            );
-        }
 
         strings_to_scan
     }

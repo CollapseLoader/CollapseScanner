@@ -527,30 +527,30 @@ impl CollapseApp {
         let summary = container(
             column![
                 text("Scan Summary")
-                    .size(20)
+                    .size(16)
                     .style(|_theme: &Theme| text::Style {
                         color: Some(theme::ACCENT_COLOR),
                     }),
-                vertical_space().height(15),
-                text(format!("Total files scanned: {}", self.results.len())).size(15),
+                vertical_space().height(2),
+                text(format!("Total files scanned: {}", self.results.len())).size(13),
                 text(format!(
                     "Files with findings (after filter): {}",
                     filtered_results.len()
                 ))
-                .size(15),
+                .size(13),
                 text(format!(
                     "Total findings: {}",
                     findings_by_type.values().map(|v| v.len()).sum::<usize>()
                 ))
-                .size(15),
+                .size(13),
             ]
-            .spacing(8)
-            .padding(25),
+            .spacing(6)
+            .padding(16),
         )
         .style(theme::card_style)
         .width(Length::Fill);
 
-        let mut findings_list = Column::new().spacing(8).padding(25);
+        let mut findings_list = Column::new().spacing(8).padding(15);
 
         for (i, result) in filtered_results.iter().enumerate() {
             let is_expanded = self.expanded_findings.contains(&i);

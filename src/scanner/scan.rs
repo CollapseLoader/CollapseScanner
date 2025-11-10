@@ -1,8 +1,6 @@
+use moka::sync::Cache;
 use std::collections::HashSet;
-use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
-
-use lru::LruCache;
 use wildmatch::WildMatch;
 
 use crate::config::SYSTEM_CONFIG;
@@ -11,7 +9,7 @@ use crate::errors::ScanError;
 use crate::filters::GOOD_LINKS;
 use crate::types::ScannerOptions;
 
-type ResultCache = Arc<Mutex<LruCache<u64, Vec<(crate::types::FindingType, String)>>>>;
+type ResultCache = Arc<Cache<u64, Vec<(crate::types::FindingType, String)>>>;
 
 pub struct CollapseScanner {
     pub options: ScannerOptions,
@@ -64,9 +62,6 @@ impl CollapseScanner {
             .map(|p| WildMatch::new(p))
             .collect();
 
-        let cache_size = NonZeroUsize::new(SYSTEM_CONFIG.result_cache_size)
-            .unwrap_or_else(|| NonZeroUsize::new(1).unwrap());
-
         if options.verbose {
             SYSTEM_CONFIG.log_config();
         }
@@ -79,7 +74,11 @@ impl CollapseScanner {
             found_custom_jvm_indicator: Arc::new(Mutex::new(false)),
             exclude_patterns,
             find_patterns,
-            result_cache: Arc::new(Mutex::new(LruCache::new(cache_size))),
+            result_cache: Arc::new(
+                Cache::builder()
+                    .max_capacity(SYSTEM_CONFIG.result_cache_size as u64)
+                    .build(),
+            ),
         })
     }
 }

@@ -22,7 +22,7 @@ gui = ["iced", "rfd", "tokio"]
 [dependencies]
 regex = "1.12.2"
 zip = "6.0.0"
-indicatif = "0.18.2"
+indicatif = "0.18.3"
 lazy_static = "1.5.0"
 url = "2.5.7"
 hex = "0.4.3"
@@ -40,6 +40,7 @@ sysinfo = "0.37.2"
 bloomfilter = "3.0.1"
 ipnet = "2.11.0"
 moka = { version = "0.12.11", features = ["sync"] }
+memmap2 = "0.9.9"
 
 # CLI dependencies (optional)
 colored = { version = "3.0.0", optional = true }

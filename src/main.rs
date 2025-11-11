@@ -449,7 +449,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 sorted_significant_results.sort_by_key(|r| &r.file_path);
 
                 for result in &sorted_significant_results {
-                    for (finding_type, _) in &result.matches {
+                    for (finding_type, _) in result.matches.iter() {
                         *findings_by_type.entry(finding_type.clone()).or_insert(0) += 1;
                         total_findings += 1;
                     }
@@ -479,7 +479,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                         HashMap::new();
 
                     for result in &sorted_significant_results {
-                        for (finding_type, value) in &result.matches {
+                        for (finding_type, value) in result.matches.iter() {
                             findings_by_type
                                 .entry(finding_type.clone())
                                 .or_default()
@@ -587,7 +587,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                         HashMap::new();
 
                     for result in &sorted_significant_results {
-                        for (finding_type, value) in &result.matches {
+                        for (finding_type, value) in result.matches.iter() {
                             all_findings
                                 .entry(finding_type.clone())
                                 .or_default()

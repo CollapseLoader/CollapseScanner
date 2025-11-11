@@ -2,10 +2,33 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+// custom serde helper to (de)serialize Arc<Vec<(FindingType,String)>>
+mod arc_matches_serde {
+    use super::FindingType;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+
+    pub fn serialize<S>(v: &Arc<Vec<(FindingType, String)>>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        v.as_ref().serialize(s)
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Arc<Vec<(FindingType, String)>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec = Vec::<(FindingType, String)>::deserialize(d)?;
+        Ok(Arc::new(vec))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub file_path: String,
-    pub matches: Vec<(FindingType, String)>,
+    #[serde(with = "arc_matches_serde")]
+    pub matches: Arc<Vec<(FindingType, String)>>,
     pub class_details: Option<ClassDetails>,
     pub resource_info: Option<ResourceInfo>,
     pub danger_score: u8,

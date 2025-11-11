@@ -516,7 +516,7 @@ impl CollapseApp {
         let mut findings_by_type: HashMap<FindingType, Vec<(&ScanResult, &String)>> =
             HashMap::new();
         for result in &filtered_results {
-            for (finding_type, value) in &result.matches {
+            for (finding_type, value) in result.matches.iter() {
                 findings_by_type
                     .entry(finding_type.clone())
                     .or_default()
@@ -612,7 +612,7 @@ impl CollapseApp {
                             }),
                     );
 
-                for (finding_type, value) in &result.matches {
+                for (finding_type, value) in result.matches.iter() {
                     details = details.push(
                         row![
                             text(format!("• {}: ", finding_type)).size(14).style(
@@ -848,7 +848,7 @@ impl CollapseApp {
                 if r.file_path.to_lowercase().contains(&search) {
                     return true;
                 }
-                for (_t, v) in &r.matches {
+                for (_t, v) in r.matches.iter() {
                     if v.to_lowercase().contains(&search) {
                         return true;
                     }

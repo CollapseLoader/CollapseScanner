@@ -9,7 +9,7 @@ use crate::errors::ScanError;
 use crate::filters::GOOD_LINKS;
 use crate::types::ScannerOptions;
 
-type ResultCache = Arc<Cache<u64, Vec<(crate::types::FindingType, String)>>>;
+type ResultCache = Arc<Cache<u64, Arc<Vec<(crate::types::FindingType, String)>>>>;
 
 pub struct CollapseScanner {
     pub options: ScannerOptions,

@@ -3,11 +3,16 @@ use std::collections::HashSet;
 lazy_static::lazy_static! {
     pub static ref SAFE_STRING_CACHE: moka::sync::Cache<String, ()> = {
         let capacity = crate::config::SYSTEM_CONFIG.safe_string_cache_capacity as u64;
-        moka::sync::Cache::builder().max_capacity(capacity).build()
+        moka::sync::Cache::builder()
+            .max_capacity(capacity)
+            .build()
     };
 
-    pub static ref SAFE_STRING_BLOOM: std::sync::Mutex<bloomfilter::Bloom<String>> = {
-        std::sync::Mutex::new(bloomfilter::Bloom::new_for_fp_rate(100000, 0.01).unwrap())
+    pub static ref SAFE_STRING_BLOOM: std::sync::RwLock<bloomfilter::Bloom<String>> = {
+        let capacity = crate::config::SYSTEM_CONFIG.safe_string_cache_capacity;
+        std::sync::RwLock::new(
+            bloomfilter::Bloom::new_for_fp_rate(capacity, 0.01).unwrap()
+        )
     };
 
     pub static ref SUSSY_DOMAINS: HashSet<String> = {
@@ -25,10 +30,16 @@ lazy_static::lazy_static! {
 }
 
 pub fn is_cached_safe_string(s: &str) -> bool {
-    if let Ok(bloom) = SAFE_STRING_BLOOM.lock() {
-        if !bloom.check(&s.to_string()) {
+    if SAFE_STRING_CACHE.get(s).is_some() {
+        return true;
+    }
+
+    if let Ok(bloom_guard) = SAFE_STRING_BLOOM.try_read() {
+        if !bloom_guard.check(&s.to_string()) {
             return false;
         }
+    } else {
+        return false;
     }
 
     SAFE_STRING_CACHE.get(s).is_some()
@@ -37,8 +48,10 @@ pub fn is_cached_safe_string(s: &str) -> bool {
 pub fn cache_safe_string(s: &str) -> bool {
     let string_owned = s.to_string();
 
-    if let Ok(mut bloom) = SAFE_STRING_BLOOM.lock() {
-        bloom.set(&string_owned);
+    if let Ok(mut bloom_guard) = SAFE_STRING_BLOOM.try_write() {
+        bloom_guard.set(&string_owned);
+    } else if let Ok(mut bloom_guard) = SAFE_STRING_BLOOM.write() {
+        bloom_guard.set(&string_owned);
     }
 
     SAFE_STRING_CACHE.insert(string_owned, ());

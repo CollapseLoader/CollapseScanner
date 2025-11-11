@@ -1,4 +1,6 @@
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::detection::{cache_safe_string, calculate_detection_hash, is_cached_safe_string};
 use crate::errors::ScanError;
@@ -24,7 +26,7 @@ impl CollapseScanner {
             .scan_class_data(&data, &res_info.path, Some(res_info.clone()))?
             .unwrap_or_else(|| ScanResult {
                 file_path: res_info.path.clone(),
-                matches: Vec::new(),
+                matches: Arc::new(Vec::new()),
                 class_details: None,
                 resource_info: Some(res_info.clone()),
                 danger_score: 1,
@@ -43,7 +45,19 @@ impl CollapseScanner {
         let data_hash = calculate_detection_hash(data);
 
         if let Some(cached_findings) = self.get_cached_findings(data_hash) {
-            return self.handle_cached_findings(&cached_findings, original_path_str, resource_info);
+            return self.handle_cached_findings(
+                cached_findings.clone(),
+                original_path_str,
+                resource_info,
+            );
+        }
+
+        if let Some(cached_findings) = self.get_cached_findings(data_hash) {
+            return self.handle_cached_findings(
+                cached_findings.clone(),
+                original_path_str,
+                resource_info,
+            );
         }
 
         let mut findings = Vec::new();
@@ -66,7 +80,9 @@ impl CollapseScanner {
 
         self.scan_strings_by_mode(&strings_to_scan, &mut findings);
 
-        self.cache_findings_new(data_hash, &findings);
+        let _cached_arc = self
+            .result_cache
+            .get_with(data_hash, || Arc::new(findings.clone()));
 
         self.create_scan_result(findings, class_details, original_path_str, resource_info)
     }
@@ -288,15 +304,14 @@ impl CollapseScanner {
         false
     }
 
-    fn get_cached_findings(&self, hash: u64) -> Option<Vec<(FindingType, String)>> {
-        match self.result_cache.get(&hash) {
-            Some(v) => Some(v.clone()),
-            None => None,
-        }
+    fn get_cached_findings(&self, hash: u64) -> Option<Arc<Vec<(FindingType, String)>>> {
+        self.result_cache.get(&hash)
     }
 
     fn cache_findings_new(&self, hash: u64, findings: &[(FindingType, String)]) {
-        self.result_cache.insert(hash, findings.to_vec());
+        let vec = findings.to_vec();
+        let arc = Arc::new(vec);
+        let _ = self.result_cache.get_with(hash, || arc.clone());
     }
 
     fn calculate_danger_score(
@@ -469,10 +484,12 @@ impl CollapseScanner {
 
     fn handle_cached_findings(
         &self,
-        cached_findings: &[(FindingType, String)],
+        cached_findings_arc: Arc<Vec<(FindingType, String)>>,
         original_path_str: &str,
         resource_info: Option<ResourceInfo>,
     ) -> Result<Option<ScanResult>, ScanError> {
+        let cached_findings: &[(FindingType, String)] = cached_findings_arc.as_ref();
+
         if !cached_findings.is_empty() || self.options.verbose {
             let danger_score = self.calculate_danger_score(cached_findings, resource_info.as_ref());
             let danger_explanation = self.generate_danger_explanation(
@@ -483,7 +500,7 @@ impl CollapseScanner {
 
             Ok(Some(ScanResult {
                 file_path: original_path_str.to_string(),
-                matches: cached_findings.to_vec(),
+                matches: cached_findings_arc.clone(),
                 class_details: None,
                 resource_info,
                 danger_score,
@@ -516,7 +533,7 @@ impl CollapseScanner {
 
             Ok(Some(ScanResult {
                 file_path: original_path_str.to_string(),
-                matches: findings.clone(),
+                matches: Arc::new(findings.clone()),
                 class_details: None,
                 resource_info,
                 danger_score,
@@ -604,24 +621,48 @@ impl CollapseScanner {
     ) {
         match self.options.mode {
             DetectionMode::All => {
-                for string in strings_to_scan {
-                    if self.check_all_patterns(string, findings) {
-                        cache_safe_string(string);
-                    }
+                let partials: Vec<Vec<(FindingType, String)>> = strings_to_scan
+                    .par_iter()
+                    .map(|s| {
+                        let mut local = Vec::new();
+                        if self.check_all_patterns(s, &mut local) {
+                            cache_safe_string(s);
+                        }
+                        local
+                    })
+                    .collect();
+                for mut p in partials {
+                    findings.append(&mut p);
                 }
             }
             DetectionMode::Network => {
-                for string in strings_to_scan {
-                    if self.check_network_patterns_combined(string, findings) {
-                        cache_safe_string(string);
-                    }
+                let partials: Vec<Vec<(FindingType, String)>> = strings_to_scan
+                    .par_iter()
+                    .map(|s| {
+                        let mut local = Vec::new();
+                        if self.check_network_patterns_combined(s, &mut local) {
+                            cache_safe_string(s);
+                        }
+                        local
+                    })
+                    .collect();
+                for mut p in partials {
+                    findings.append(&mut p);
                 }
             }
             DetectionMode::Malicious => {
-                for string in strings_to_scan {
-                    if self.check_malicious_patterns_only(string, findings) {
-                        cache_safe_string(string);
-                    }
+                let partials: Vec<Vec<(FindingType, String)>> = strings_to_scan
+                    .par_iter()
+                    .map(|s| {
+                        let mut local = Vec::new();
+                        if self.check_malicious_patterns_only(s, &mut local) {
+                            cache_safe_string(s);
+                        }
+                        local
+                    })
+                    .collect();
+                for mut p in partials {
+                    findings.append(&mut p);
                 }
             }
             _ => {}
@@ -642,7 +683,7 @@ impl CollapseScanner {
 
             Ok(Some(ScanResult {
                 file_path: original_path_str.to_string(),
-                matches: findings,
+                matches: Arc::new(findings),
                 class_details: Some(class_details),
                 resource_info,
                 danger_score,

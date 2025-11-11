@@ -14,7 +14,6 @@ use crate::config::SYSTEM_CONFIG;
 use crate::errors::ScanError;
 use crate::scanner::scan::CollapseScanner;
 use crate::types::{ResourceInfo, ScanResult};
-use crate::utils::calculate_entropy;
 
 impl CollapseScanner {
     pub(crate) fn scan_jar_file(&self, jar_path: &Path) -> Result<Vec<ScanResult>, ScanError> {
@@ -119,7 +118,6 @@ impl CollapseScanner {
                                     path: original_entry_name.clone(),
                                     size: buffer.len() as u64,
                                     is_class_file: false,
-                                    entropy: 0.0,
                                     is_dead_class_candidate: false,
                                 },
                             ));
@@ -226,7 +224,6 @@ impl CollapseScanner {
             path: original_path_str.to_string(),
             size: data.len() as u64,
             is_class_file: is_standard_class_file,
-            entropy: calculate_entropy(data),
             is_dead_class_candidate,
         })
     }

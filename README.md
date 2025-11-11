@@ -10,13 +10,12 @@
 
     -   **Network**: Detect potentially malicious IPv4/IPv6 addresses and URLs
     -   **Malicious**: Identify suspicious code patterns (backdoors, exploits, etc.)
-    -   **Obfuscation**: Detect obfuscated code, high entropy, and suspicious naming patterns
+    -   **Obfuscation**: Detect obfuscated code and suspicious naming patterns
 
 -   **Features** ⚙️:
 
     -   **Resource extraction**: Extract all resources from JAR files
     -   **String analysis**: Extract and analyze all strings from class files
-    -   **Entropy calculation**: Calculate entropy of files to help identify obfuscated code
 
 -   **Performance optimizations** 🚀:
 
@@ -88,7 +87,7 @@ collapsescanner file.jar --ignore_keywords ignore_keywords.txt
 | `--strings`                    | Extract all strings from class files                                                |
 | `--output`                     | Specify the output directory (default: ./extracted)                                 |
 | `--json`                       | Export results in JSON format                                                       |
-| `-v, --verbose`                | Enable verbose output (shows size/entropy, etc.)                                    |
+| `-v, --verbose`                | Enable verbose output (shows size, etc.)                                            |
 | `--threads`                    | Number of threads to use for parallel processing (0 = automatic based on CPU cores) |
 | `--exclude`                    | Exclude paths matching the wildcard pattern (can be used multiple times)            |
 | `--find`                       | Only scan paths matching the wildcard pattern (can be used multiple times)          |
@@ -121,7 +120,6 @@ CollapseScanner analyzes Java class files to find:
 -   **Obfuscation indicators**:
     -   Suspicious character sequences
     -   Unicode characters in identifiers
-    -   High entropy (potentially obfuscated) files
     -   Custom JVM bytecode detection (unusual magic bytes)
 
 ## 🛠️ Tools
@@ -164,7 +162,6 @@ cargo run --bin remapper input.jar output.jar
      🔗 URL: http://malicious-domain.com/c2
      🤖 Discord Webhook: https://discord.com/api/webhooks/12345/abcdef
      ❗ Suspicious Keyword: 'payload' in "Executing payload"
-     🔥 High Entropy: Very High entropy value: 8.45 (threshold: 7.20) - suggests possible encryption or compression
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                              SCAN SUMMARY                                    ║
@@ -186,9 +183,6 @@ cargo run --bin remapper input.jar output.jar
 
   ❗ Suspicious Keyword (1)
     • 'payload' in "Executing payload"
-
-  🔥 High Entropy (1)
-    • Very High entropy value: 8.45
 
 👻 Custom JVM Warning: Files with unusual magic bytes detected. These may require a custom ClassLoader.
 

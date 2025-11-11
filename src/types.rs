@@ -49,7 +49,6 @@ pub enum FindingType {
     DiscordWebhook,
     SuspiciousKeyword,
     ObfuscationUnicode,
-    HighEntropy,
 }
 
 impl std::fmt::Display for FindingType {
@@ -62,7 +61,6 @@ impl std::fmt::Display for FindingType {
             FindingType::DiscordWebhook => write!(f, "Discord Webhook"),
             FindingType::SuspiciousKeyword => write!(f, "Suspicious Keyword"),
             FindingType::ObfuscationUnicode => write!(f, "Obfuscation (Unicode Name)"),
-            FindingType::HighEntropy => write!(f, "High Entropy"),
         }
     }
 }
@@ -77,7 +75,6 @@ impl FindingType {
             FindingType::DiscordWebhook => ("🤖", "red"),
             FindingType::SuspiciousKeyword => ("❗", "red"),
             FindingType::ObfuscationUnicode => ("㊙️ ", "magenta"),
-            FindingType::HighEntropy => ("🔥", "yellow"),
         }
     }
 }
@@ -91,7 +88,6 @@ impl FindingType {
             FindingType::DiscordWebhook => 10,
             FindingType::SuspiciousKeyword => 3,
             FindingType::ObfuscationUnicode => 1,
-            FindingType::HighEntropy => 3,
         }
     }
 
@@ -102,7 +98,6 @@ impl FindingType {
             FindingType::Url => 6,
             FindingType::SuspiciousKeyword => 6,
             FindingType::ObfuscationUnicode => 4,
-            FindingType::HighEntropy => 6,
             FindingType::DiscordWebhook => 10,
         }
     }
@@ -138,7 +133,6 @@ pub struct ResourceInfo {
     pub path: String,
     pub size: u64,
     pub is_class_file: bool,
-    pub entropy: f64,
     pub is_dead_class_candidate: bool,
 }
 

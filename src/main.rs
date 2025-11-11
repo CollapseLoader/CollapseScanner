@@ -137,6 +137,7 @@ fn create_scanner_options(args: &Args) -> ScannerOptions {
     }
 }
 
+#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn apply_env_overrides(args: &Args) {
     if let Some(mb) = args.buffer_size_mb {
         std::env::set_var("COLLAPSE_BUFFER_SIZE_MB", mb.to_string());

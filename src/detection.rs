@@ -1,7 +1,5 @@
 use std::collections::HashSet;
 
-pub const ENTROPY_THRESHOLD: f64 = 7.2;
-
 lazy_static::lazy_static! {
     pub static ref SAFE_STRING_CACHE: moka::sync::Cache<String, ()> = {
         let capacity = crate::config::SYSTEM_CONFIG.safe_string_cache_capacity as u64;

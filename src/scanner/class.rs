@@ -1,14 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::detection::{
-    cache_safe_string, calculate_detection_hash, is_cached_safe_string, ENTROPY_THRESHOLD,
-};
+use crate::detection::{cache_safe_string, calculate_detection_hash, is_cached_safe_string};
 use crate::errors::ScanError;
 use crate::filters::{is_known_good_ip, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX, URL_REGEX};
 use crate::parser::parse_class_structure;
 use crate::scanner::scan::CollapseScanner;
 use crate::types::{ClassDetails, DetectionMode, FindingType, ResourceInfo, ScanResult};
-use crate::utils::{calculate_entropy, extract_domain, get_simple_name, truncate_string};
+use crate::utils::{extract_domain, get_simple_name, truncate_string};
 
 impl CollapseScanner {
     pub(crate) fn scan_class_file_data(
@@ -62,7 +60,7 @@ impl CollapseScanner {
 
         let class_details = parse_class_structure(data, original_path_str, self.options.verbose)?;
 
-        self.analyze_class_details(&class_details, data, &resource_info, &mut findings);
+        self.analyze_class_details(&class_details, &mut findings);
 
         let strings_to_scan = self.prepare_strings_for_scanning(&class_details);
 
@@ -301,32 +299,6 @@ impl CollapseScanner {
         self.result_cache.insert(hash, findings.to_vec());
     }
 
-    fn check_high_entropy(
-        &self,
-        resource_info: &ResourceInfo,
-        findings: &mut Vec<(FindingType, String)>,
-    ) {
-        if resource_info.entropy > ENTROPY_THRESHOLD {
-            let entropy_level = if resource_info.entropy > ENTROPY_THRESHOLD + 1.0 {
-                "Very High"
-            } else if resource_info.entropy > ENTROPY_THRESHOLD + 0.5 {
-                "High"
-            } else {
-                "Moderate"
-            };
-
-            findings.push((
-                FindingType::HighEntropy,
-                format!(
-                    "{} entropy value: {:.2} (threshold: {:.2}) - suggests possible encryption or compression",
-                    entropy_level,
-                    resource_info.entropy,
-                    ENTROPY_THRESHOLD
-                ),
-            ));
-        }
-    }
-
     fn calculate_danger_score(
         &self,
         findings: &[(FindingType, String)],
@@ -356,14 +328,6 @@ impl CollapseScanner {
         if let Some(ri) = resource_info {
             if ri.is_dead_class_candidate {
                 score_acc += 3;
-            }
-
-            if ri.entropy > ENTROPY_THRESHOLD + 1.0 {
-                score_acc += 3;
-            } else if ri.entropy > ENTROPY_THRESHOLD + 0.5 {
-                score_acc += 2;
-            } else if ri.entropy > ENTROPY_THRESHOLD + 0.3 {
-                score_acc += 1;
             }
         }
 
@@ -494,25 +458,6 @@ impl CollapseScanner {
             }
         }
 
-        if let Some(high_entropy) = by_type.get(&FindingType::HighEntropy) {
-            if !high_entropy.is_empty() {
-                if let Some(ri) = resource_info {
-                    let entropy_desc = if ri.entropy > ENTROPY_THRESHOLD + 1.0 {
-                        "Very high entropy"
-                    } else if ri.entropy > ENTROPY_THRESHOLD + 0.5 {
-                        "High entropy"
-                    } else {
-                        "Moderately high entropy"
-                    };
-                    explanations.push(format!(
-                        "{} value ({:.2}) suggesting possible encryption, compression, or obfuscated code.",
-                        entropy_desc,
-                        ri.entropy
-                    ));
-                }
-            }
-        }
-
         if resource_info.is_some_and(|ri| ri.is_dead_class_candidate) {
             explanations.push(
                 "Contains custom JVM bytecode (0xDEAD) which may indicate use of a custom classloader to evade detection.".to_string()
@@ -562,10 +507,6 @@ impl CollapseScanner {
             *found_flag = true;
         }
 
-        if let Some(ref ri) = resource_info {
-            self.check_high_entropy(ri, findings);
-        }
-
         self.cache_findings_new(data_hash, findings);
 
         if !findings.is_empty() || self.options.verbose {
@@ -589,24 +530,8 @@ impl CollapseScanner {
     fn analyze_class_details(
         &self,
         class_details: &ClassDetails,
-        data: &[u8],
-        resource_info: &Option<ResourceInfo>,
         findings: &mut Vec<(FindingType, String)>,
     ) {
-        if let Some(ref ri) = resource_info {
-            self.check_high_entropy(ri, findings);
-        } else {
-            let entropy = calculate_entropy(data);
-            let fallback_ri = ResourceInfo {
-                path: "".to_string(),
-                size: data.len() as u64,
-                is_class_file: true,
-                entropy,
-                is_dead_class_candidate: false,
-            };
-            self.check_high_entropy(&fallback_ri, findings);
-        }
-
         if self.options.mode == DetectionMode::Obfuscation
             || self.options.mode == DetectionMode::All
         {

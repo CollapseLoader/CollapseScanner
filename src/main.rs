@@ -620,6 +620,14 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+
+                    if !args.show {
+                        println!(
+                            "\n{} {}",
+                            "💡".cyan().bold(),
+                            "Tip: Use the '--show' flag to display detailed findings.".cyan()
+                        );
+                    }
                 } else {
                     let scan_duration = scan_start_time.elapsed();
                     let total_files_scanned = results.len();

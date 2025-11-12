@@ -11,6 +11,7 @@ use crate::types::{ClassDetails, DetectionMode, FindingType, ResourceInfo, ScanR
 use crate::utils::{extract_domain, get_simple_name, truncate_string};
 
 impl CollapseScanner {
+    const MAX_SCAN_STRING_LEN: usize = 2048;
     pub(crate) fn scan_class_file_data(
         &self,
         original_path_str: &str,
@@ -625,8 +626,14 @@ impl CollapseScanner {
                     .par_iter()
                     .map(|s| {
                         let mut local = Vec::new();
-                        if self.check_all_patterns(s, &mut local) {
-                            cache_safe_string(s);
+                        let s_ref: &str = s.as_str();
+                        let s_to_check: &str = if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
+                            &s_ref[..Self::MAX_SCAN_STRING_LEN]
+                        } else {
+                            s_ref
+                        };
+                        if self.check_all_patterns(s_to_check, &mut local) {
+                            cache_safe_string(s_ref);
                         }
                         local
                     })
@@ -640,8 +647,14 @@ impl CollapseScanner {
                     .par_iter()
                     .map(|s| {
                         let mut local = Vec::new();
-                        if self.check_network_patterns_combined(s, &mut local) {
-                            cache_safe_string(s);
+                        let s_ref: &str = s.as_str();
+                        let s_to_check: &str = if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
+                            &s_ref[..Self::MAX_SCAN_STRING_LEN]
+                        } else {
+                            s_ref
+                        };
+                        if self.check_network_patterns_combined(s_to_check, &mut local) {
+                            cache_safe_string(s_ref);
                         }
                         local
                     })
@@ -655,8 +668,14 @@ impl CollapseScanner {
                     .par_iter()
                     .map(|s| {
                         let mut local = Vec::new();
-                        if self.check_malicious_patterns_only(s, &mut local) {
-                            cache_safe_string(s);
+                        let s_ref: &str = s.as_str();
+                        let s_to_check: &str = if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
+                            &s_ref[..Self::MAX_SCAN_STRING_LEN]
+                        } else {
+                            s_ref
+                        };
+                        if self.check_malicious_patterns_only(s_to_check, &mut local) {
+                            cache_safe_string(s_ref);
                         }
                         local
                     })

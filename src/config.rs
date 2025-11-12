@@ -4,7 +4,7 @@ use sysinfo::System;
 
 const DEFAULT_RESULT_CACHE_SIZE: usize = 4096;
 const DEFAULT_BUFFER_SIZE: usize = 512 * 1024;
-const DEFAULT_SAFE_STRING_CACHE_CAPACITY: usize = 1000;
+const DEFAULT_SAFE_STRING_CACHE_CAPACITY: usize = 4000;
 
 const LOW_MEMORY_THRESHOLD: u64 = 4 * 1024 * 1024 * 1024;
 const MEDIUM_MEMORY_THRESHOLD: u64 = 8 * 1024 * 1024 * 1024;
@@ -75,9 +75,9 @@ impl SystemConfig {
             } else {
                 match available_memory {
                     mem if mem < LOW_MEMORY_THRESHOLD => DEFAULT_SAFE_STRING_CACHE_CAPACITY,
-                    mem if mem < MEDIUM_MEMORY_THRESHOLD => 5000,
-                    mem if mem < HIGH_MEMORY_THRESHOLD => 20_000,
-                    _ => 100_000,
+                    mem if mem < MEDIUM_MEMORY_THRESHOLD => 20_000,
+                    mem if mem < HIGH_MEMORY_THRESHOLD => 80_000,
+                    _ => 2_000_000,
                 }
             };
 

@@ -627,11 +627,42 @@ impl CollapseScanner {
                     .map(|s| {
                         let mut local = Vec::new();
                         let s_ref: &str = s.as_str();
-                        let s_to_check: &str = if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
-                            &s_ref[..Self::MAX_SCAN_STRING_LEN]
+                        let s_to_check: &str;
+                        let mut truncated_due_to_boundary = false;
+                        if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
+                            if let Some(part) = s_ref.get(..Self::MAX_SCAN_STRING_LEN) {
+                                s_to_check = part;
+                            } else {
+                                let mut i = Self::MAX_SCAN_STRING_LEN;
+                                while i > 0 && !s_ref.is_char_boundary(i) {
+                                    i -= 1;
+                                }
+                                if i == 0 {
+                                    s_to_check = "";
+                                } else {
+                                    s_to_check = &s_ref[..i];
+                                    truncated_due_to_boundary = true;
+                                }
+                            }
                         } else {
-                            s_ref
-                        };
+                            s_to_check = s_ref;
+                        }
+                        if truncated_due_to_boundary {
+                            if self.options.verbose {
+                                println!(
+                                    "      Warning: possible obfuscated/non-UTF8 string truncated: {}",
+                                    truncate_string(s_ref, 60)
+                                );
+                            }
+                            local.push((
+                                FindingType::ObfuscationUnicode,
+                                format!(
+                                    "Obfuscated string truncated: {}",
+                                    truncate_string(s_ref, 60)
+                                ),
+                            ));
+                        }
+
                         if self.check_all_patterns(s_to_check, &mut local) {
                             cache_safe_string(s_ref);
                         }
@@ -648,11 +679,42 @@ impl CollapseScanner {
                     .map(|s| {
                         let mut local = Vec::new();
                         let s_ref: &str = s.as_str();
-                        let s_to_check: &str = if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
-                            &s_ref[..Self::MAX_SCAN_STRING_LEN]
+                        let s_to_check: &str;
+                        let mut truncated_due_to_boundary = false;
+                        if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
+                            if let Some(part) = s_ref.get(..Self::MAX_SCAN_STRING_LEN) {
+                                s_to_check = part;
+                            } else {
+                                let mut i = Self::MAX_SCAN_STRING_LEN;
+                                while i > 0 && !s_ref.is_char_boundary(i) {
+                                    i -= 1;
+                                }
+                                if i == 0 {
+                                    s_to_check = "";
+                                } else {
+                                    s_to_check = &s_ref[..i];
+                                    truncated_due_to_boundary = true;
+                                }
+                            }
                         } else {
-                            s_ref
-                        };
+                            s_to_check = s_ref;
+                        }
+                        if truncated_due_to_boundary {
+                            if self.options.verbose {
+                                println!(
+                                    "      Warning: possible obfuscated/non-UTF8 string truncated: {}",
+                                    truncate_string(s_ref, 60)
+                                );
+                            }
+                            local.push((
+                                FindingType::ObfuscationUnicode,
+                                format!(
+                                    "Obfuscated string truncated: {}",
+                                    truncate_string(s_ref, 60)
+                                ),
+                            ));
+                        }
+
                         if self.check_network_patterns_combined(s_to_check, &mut local) {
                             cache_safe_string(s_ref);
                         }
@@ -669,11 +731,42 @@ impl CollapseScanner {
                     .map(|s| {
                         let mut local = Vec::new();
                         let s_ref: &str = s.as_str();
-                        let s_to_check: &str = if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
-                            &s_ref[..Self::MAX_SCAN_STRING_LEN]
+                        let s_to_check: &str;
+                        let mut truncated_due_to_boundary = false;
+                        if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
+                            if let Some(part) = s_ref.get(..Self::MAX_SCAN_STRING_LEN) {
+                                s_to_check = part;
+                            } else {
+                                let mut i = Self::MAX_SCAN_STRING_LEN;
+                                while i > 0 && !s_ref.is_char_boundary(i) {
+                                    i -= 1;
+                                }
+                                if i == 0 {
+                                    s_to_check = "";
+                                } else {
+                                    s_to_check = &s_ref[..i];
+                                    truncated_due_to_boundary = true;
+                                }
+                            }
                         } else {
-                            s_ref
-                        };
+                            s_to_check = s_ref;
+                        }
+                        if truncated_due_to_boundary {
+                            if self.options.verbose {
+                                println!(
+                                    "      Warning: possible obfuscated/non-UTF8 string truncated: {}",
+                                    truncate_string(s_ref, 60)
+                                );
+                            }
+                            local.push((
+                                FindingType::ObfuscationUnicode,
+                                format!(
+                                    "Obfuscated string truncated: {}",
+                                    truncate_string(s_ref, 60)
+                                ),
+                            ));
+                        }
+
                         if self.check_malicious_patterns_only(s_to_check, &mut local) {
                             cache_safe_string(s_ref);
                         }

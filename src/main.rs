@@ -644,12 +644,10 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                     );
 
                     println!(
-                        "{} {}: {:.2}s | {}: {} | {}: {:.1} files/sec",
+                        "{} {}: {:.2}s | {}: {:.1} files/sec",
                         "⏱️".bright_white().bold(),
                         "Scan Time".bright_white(),
                         scan_duration.as_secs_f64(),
-                        "Total Files Scanned".bright_white(),
-                        total_files_scanned.to_string().bright_white(),
                         "Processing Rate".bright_white(),
                         scan_rate
                     );

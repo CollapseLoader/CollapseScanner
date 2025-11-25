@@ -52,7 +52,6 @@ collapsescanner directory
 
 # Different detection modes
 collapsescanner file.jar --mode network
-collapsescanner file.jar --mode malicious
 collapsescanner file.jar --mode obfuscation
 
 # Extract all resources from the JAR
@@ -63,9 +62,6 @@ collapsescanner file.jar --strings
 
 # Specify output directory
 collapsescanner file.jar --extract --output output/dir
-
-# Export analysis to JSON
-collapsescanner file.jar --json
 
 # Run with 8 processing threads
 collapsescanner file.jar --threads 8

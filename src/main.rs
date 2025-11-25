@@ -20,6 +20,7 @@ use {
     std::io::{self},
     std::path::{Path, PathBuf},
     walkdir::WalkDir,
+    serde_json::json,
 };
 
 #[cfg(all(feature = "cli", not(feature = "gui")))]
@@ -361,18 +362,23 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     apply_env_overrides(&args);
     let options = create_scanner_options(&args);
 
-    print_banner();
+    if !args.json {
+        print_banner();
+    }
 
     configure_threading(&args)?;
 
     let scanner = CollapseScanner::new(options.clone())?;
     let path = validate_and_prepare_path(&args)?;
-    print_scan_configuration(&path, &args, &scanner);
-    println!(
-        "\n{} {}",
-        "🚀".bright_green().bold(),
-        "Initializing scan...".bright_green()
-    );
+    
+    if !args.json {
+        print_scan_configuration(&path, &args, &scanner);
+        println!(
+            "\n{} {}",
+            "🚀".bright_green().bold(),
+            "Initializing scan...".bright_green()
+        );
+    }
 
     let scan_start_time = std::time::Instant::now();
 
@@ -382,6 +388,31 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 .iter()
                 .filter(|r| !r.matches.is_empty() || scanner.options.verbose)
                 .collect();
+
+            if args.json {
+                let mut sorted_significant_results = significant_results.clone();
+                sorted_significant_results.sort_by_key(|r| &r.file_path);
+                
+                let (avg_danger_score, _, risk_level) =
+                        calculate_scan_score(&sorted_significant_results);
+
+                let total_findings: usize = sorted_significant_results
+                    .iter()
+                    .map(|r| r.matches.len())
+                    .sum();
+
+                let json_output = json!({
+                    "scan_time_seconds": scan_start_time.elapsed().as_secs_f64(),
+                    "total_files_scanned": results.len(),
+                    "total_findings": total_findings,
+                    "risk_level": risk_level,
+                    "score": avg_danger_score,
+                    "results": sorted_significant_results
+                });
+                
+                println!("{}", serde_json::to_string_pretty(&json_output)?);
+                return Ok(());
+            }
 
             if significant_results.is_empty() {
                 let potentially_scannable = if path.is_file() {
@@ -655,7 +686,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let found_custom_jvm = *scanner.found_custom_jvm_indicator.lock().unwrap();
-            if found_custom_jvm {
+            if found_custom_jvm && !args.json {
                 println!(
                     "\n{} {}",
                     "👻".cyan().bold(),
@@ -668,6 +699,13 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
+            if args.json {
+                let error_json = json!({
+                    "error": e.to_string()
+                });
+                println!("{}", serde_json::to_string_pretty(&error_json)?);
+                std::process::exit(1);
+            }
             eprintln!("\n{} {}", "❌ Error during scan:".red().bold(), e);
             if options.verbose {
                 eprintln!(

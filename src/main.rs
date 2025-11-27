@@ -16,11 +16,11 @@ use {
     crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions},
     clap::Parser,
     colored::Colorize,
+    serde_json::json,
     std::collections::HashMap,
     std::io::{self},
     std::path::{Path, PathBuf},
     walkdir::WalkDir,
-    serde_json::json,
 };
 
 #[cfg(all(feature = "cli", not(feature = "gui")))]
@@ -167,6 +167,8 @@ fn apply_env_overrides(args: &Args) {
 
 #[cfg(all(feature = "cli", not(feature = "gui")))]
 fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = rayon::ThreadPoolBuilder::new().stack_size(64 * 1024 * 1024);
+
     if args.threads > 0 {
         if args.threads > 1024 {
             eprintln!(
@@ -175,10 +177,7 @@ fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 args.threads
             );
         }
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(args.threads)
-            .build_global()
-            .map_err(io::Error::other)?;
+        builder = builder.num_threads(args.threads);
         if args.verbose {
             println!(
                 "{} Using {} threads for processing.",
@@ -188,10 +187,12 @@ fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     } else if args.verbose {
         println!(
-            "{} Using automatic number of threads (Rayon default).",
+            "{} Using automatic number of threads (Rayon default) with increased stack size.",
             "🧵".blue()
         );
     }
+
+    builder.build_global().map_err(io::Error::other)?;
     Ok(())
 }
 
@@ -370,7 +371,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
     let scanner = CollapseScanner::new(options.clone())?;
     let path = validate_and_prepare_path(&args)?;
-    
+
     if !args.json {
         print_scan_configuration(&path, &args, &scanner);
         println!(
@@ -392,9 +393,9 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             if args.json {
                 let mut sorted_significant_results = significant_results.clone();
                 sorted_significant_results.sort_by_key(|r| &r.file_path);
-                
+
                 let (avg_danger_score, _, risk_level) =
-                        calculate_scan_score(&sorted_significant_results);
+                    calculate_scan_score(&sorted_significant_results);
 
                 let total_findings: usize = sorted_significant_results
                     .iter()
@@ -409,7 +410,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                     "score": avg_danger_score,
                     "results": sorted_significant_results
                 });
-                
+
                 println!("{}", serde_json::to_string_pretty(&json_output)?);
                 return Ok(());
             }

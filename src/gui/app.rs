@@ -790,16 +790,18 @@ impl CollapseApp {
         let path = PathBuf::from(&settings.path);
 
         let threads: usize = settings.threads.parse().unwrap_or(0);
+        let mut builder = rayon::ThreadPoolBuilder::new().stack_size(8 * 1024 * 1024); // 8MB stack size
+
         if threads > 0 {
-            let res = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build_global();
-            if let Err(e) = res {
-                let msg = format!("{}", e);
-                if msg.contains("already been initialized") || msg.contains("already initialized") {
-                } else {
-                    return Err(format!("Failed to configure threads: {}", e));
-                }
+            builder = builder.num_threads(threads);
+        }
+
+        let res = builder.build_global();
+        if let Err(e) = res {
+            let msg = format!("{}", e);
+            if msg.contains("already been initialized") || msg.contains("already initialized") {
+            } else {
+                return Err(format!("Failed to configure threads: {}", e));
             }
         }
 

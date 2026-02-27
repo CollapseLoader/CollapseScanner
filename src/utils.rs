@@ -2,7 +2,7 @@ use url::Url;
 
 pub fn truncate_string(s: &str, max_len: usize) -> String {
     if s.chars().count() <= max_len {
-        s.to_string()
+        s.to_owned()
     } else {
         let mut truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
         truncated.push_str("...");
@@ -37,11 +37,11 @@ pub fn extract_domain(url_str: &str) -> String {
         }
     }
 
-    "".to_string()
+    String::new()
 }
 
 pub fn get_simple_name(fqn: &str) -> &str {
     let name_part = fqn.strip_suffix('/').unwrap_or(fqn);
 
-    name_part.rsplit(['/', '.']).next().unwrap()
+    name_part.rsplit(['/', '.']).next().unwrap_or(name_part)
 }

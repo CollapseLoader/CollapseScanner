@@ -94,7 +94,6 @@ collapsescanner file.jar --ignore_keywords ignore_keywords.txt
 | `--parallel-scanning`          | Force-enable parallel scanning (overrides automatic decision)                       |
 | `--no-parallel-scanning`       | Force-disable parallel scanning (explicitly disable)                                |
 | `--available-memory-mb`        | Override detected available memory (MB) for tuning/testing                          |
-| `--show`                       | Print a detailed findings report to the terminal (useful for interactive runs)      |
 | `--max_file_size`              | Maximum file size to scan (in MB). Files larger than this will be skipped.          |
 
 ## 🛡️ Detection Capabilities

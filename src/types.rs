@@ -63,7 +63,7 @@ impl Progress {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum FindingType {
     IpAddress,
     IpV6Address,

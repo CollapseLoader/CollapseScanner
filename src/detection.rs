@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 
 lazy_static::lazy_static! {
     pub static ref SAFE_STRING_CACHE: moka::sync::Cache<String, ()> = {
@@ -34,8 +36,9 @@ pub fn is_cached_safe_string(s: &str) -> bool {
         return true;
     }
 
+    let string_owned = s.to_owned();
     if let Ok(bloom_guard) = SAFE_STRING_BLOOM.try_read() {
-        if !bloom_guard.check(&s.to_string()) {
+        if !bloom_guard.check(&string_owned) {
             return false;
         }
     } else {
@@ -59,9 +62,6 @@ pub fn cache_safe_string(s: &str) -> bool {
 }
 
 pub fn calculate_detection_hash(data: &[u8]) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
     let mut hasher = DefaultHasher::new();
 
     if data.len() > 1024 {

@@ -24,7 +24,7 @@ pub struct CollapseScanner {
 
 impl CollapseScanner {
     pub fn new(options: ScannerOptions) -> Result<Self, ScanError> {
-        let good_links: HashSet<String> = GOOD_LINKS.iter().cloned().collect();
+        let good_links = GOOD_LINKS.clone();
 
         let mut ignored_suspicious_keywords: HashSet<String> = HashSet::new();
 

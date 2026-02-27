@@ -16,51 +16,54 @@ lazy_static::lazy_static! {
 \s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»""']))"#).unwrap();
 
     /// Generic malicious / suspicious pattern keywords
-    pub static ref MALICIOUS_PATTERN_REGEX: Regex = Regex::new(r"(?i)\b(powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|socket\(|bind\(|connect\(|URL\(|URLConnection|Class\.forName|defineClass|getMethod|ldap|rmi)\b").unwrap();
+    pub static ref MALICIOUS_PATTERN_REGEX: Regex = Regex::new(r"(?i)\b(powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec)\b").unwrap();
 
     /// Known "good" links / domains
-    pub static ref GOOD_LINKS: Vec<String> = vec![
-        "account.mojang.com".to_string(),
-        "aka.ms".to_string(),
-        "apache.org".to_string(),
-        "api.mojang.com".to_string(),
-        "api.spiget.org".to_string(),
-        "authserver.mojang.com".to_string(),
-        "bugs.mojang.com".to_string(),
-        "cabaletta/baritone".to_string(),
-        "ci.viaversion.com".to_string(),
-        "com/viaversion/".to_string(),
-        "docs.advntr.dev".to_string(),
-        "dominos.com".to_string(),
-        "dump.viaversion.com".to_string(),
-        "eclipse.org".to_string(),
-        "java.sun.org".to_string(),
-        "jo0001.github.io".to_string(),
-        "logging.apache.org".to_string(),
-        "login.live.com".to_string(),
-        "lwjgl.org".to_string(),
-        "minecraft.net".to_string(),
-        "minecraft.org".to_string(),
-        "minotar.net".to_string(),
-        "mojang.com".to_string(),
-        "netty.io".to_string(),
-        "optifine.net".to_string(),
-        "paulscode/sound/".to_string(),
-        "s.optifine.net".to_string(),
-        "sessionserver.mojang.com".to_string(),
-        "shader-tutorial.dev".to_string(),
-        "snoop.minecraft.net".to_string(),
-        "tools.ietf.org".to_string(),
-        "viaversion.com".to_string(),
-        "www.openssl.org".to_string(),
-        "www.rfc-editor.org".to_string(),
-        "www.slf4j.org".to_string(),
-        "www.w3.org".to_string(),
-        "yaml.org".to_string(),
-        "openssl.org".to_string(),
-        "yggdrasil-auth-session-staging.mojang.zone".to_string(),
-        "slf4j.org".to_string(),
-    ];
+    pub static ref GOOD_LINKS: HashSet<String> = [
+        "account.mojang.com",
+        "aka.ms",
+        "apache.org",
+        "api.mojang.com",
+        "api.spiget.org",
+        "authserver.mojang.com",
+        "bugs.mojang.com",
+        "cabaletta/baritone",
+        "ci.viaversion.com",
+        "com/viaversion/",
+        "docs.advntr.dev",
+        "dominos.com",
+        "dump.viaversion.com",
+        "eclipse.org",
+        "java.sun.org",
+        "jo0001.github.io",
+        "logging.apache.org",
+        "login.live.com",
+        "lwjgl.org",
+        "minecraft.net",
+        "minecraft.org",
+        "minotar.net",
+        "mojang.com",
+        "netty.io",
+        "optifine.net",
+        "paulscode/sound/",
+        "s.optifine.net",
+        "sessionserver.mojang.com",
+        "shader-tutorial.dev",
+        "snoop.minecraft.net",
+        "tools.ietf.org",
+        "viaversion.com",
+        "www.openssl.org",
+        "www.rfc-editor.org",
+        "www.slf4j.org",
+        "www.w3.org",
+        "yaml.org",
+        "openssl.org",
+        "yggdrasil-auth-session-staging.mojang.zone",
+        "slf4j.org",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
 
     /// Known "good" / unreachable / reserved IPs and ranges
     pub static ref GOOD_IPS: HashSet<&'static str> = {
@@ -139,4 +142,40 @@ pub fn is_known_good_ip(ip: &str) -> bool {
         }
     }
     false
+}
+
+pub fn is_public_routable_ip(ip: &str) -> bool {
+    match ip.parse::<IpAddr>() {
+        Ok(addr) => {
+            if is_known_good_ip(ip) {
+                return false;
+            }
+
+            match addr {
+                IpAddr::V4(v4) => {
+                    !(v4.is_private()
+                        || v4.is_loopback()
+                        || v4.is_link_local()
+                        || v4.is_broadcast()
+                        || v4.is_documentation()
+                        || v4.is_multicast()
+                        || v4.is_unspecified())
+                }
+                IpAddr::V6(v6) => {
+                    let segments = v6.segments();
+                    let is_site_local = (segments[0] & 0xffc0) == 0xfec0;
+                    let is_documentation = segments[0] == 0x2001 && segments[1] == 0x0db8;
+
+                    !(v6.is_loopback()
+                        || v6.is_unspecified()
+                        || v6.is_unique_local()
+                        || v6.is_unicast_link_local()
+                        || is_site_local
+                        || is_documentation
+                        || v6.is_multicast())
+                }
+            }
+        }
+        Err(_) => false,
+    }
 }

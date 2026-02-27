@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use crate::detection::{cache_safe_string, calculate_detection_hash, is_cached_safe_string};
 use crate::errors::ScanError;
-use crate::filters::{is_known_good_ip, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX, URL_REGEX};
+use crate::filters::{
+    is_known_good_ip, is_public_routable_ip, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX,
+    URL_REGEX,
+};
 use crate::parser::parse_class_structure;
 use crate::scanner::scan::CollapseScanner;
 use crate::types::{ClassDetails, DetectionMode, FindingType, ResourceInfo, ScanResult};
@@ -53,17 +56,9 @@ impl CollapseScanner {
             );
         }
 
-        if let Some(cached_findings) = self.get_cached_findings(data_hash) {
-            return self.handle_cached_findings(
-                cached_findings.clone(),
-                original_path_str,
-                resource_info,
-            );
-        }
-
         let mut findings = Vec::new();
 
-        if data.len() >= 2 && data[0] != 0xCA && data[1] != 0xFE {
+        if data.len() >= 2 && (data[0] != 0xCA || data[1] != 0xFE) {
             return self.handle_non_standard_class(
                 data,
                 data_hash,
@@ -89,31 +84,32 @@ impl CollapseScanner {
     }
 
     fn check_network_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if let Some(cap) = IP_REGEX.captures(string) {
-            let ip_str = cap.get(0).unwrap().as_str().to_string();
-            if is_known_good_ip(&ip_str) {
+        if let Some(ip_match) = IP_REGEX.find(string) {
+            let ip_str = ip_match.as_str().to_owned();
+            if !is_public_routable_ip(&ip_str) {
                 return;
             }
             findings.push((FindingType::IpAddress, ip_str));
             return;
         }
 
-        if let Some(cap) = IPV6_REGEX.captures(string) {
-            let ip_str = cap.get(0).unwrap().as_str().to_string();
-            if is_known_good_ip(&ip_str) {
+        if let Some(ip_match) = IPV6_REGEX.find(string) {
+            let ip_str = ip_match.as_str().to_owned();
+            if !is_public_routable_ip(&ip_str) {
                 return;
             }
             findings.push((FindingType::IpV6Address, ip_str));
             return;
         }
 
-        if let Some(cap) = URL_REGEX.captures(string) {
-            let url_match = cap.get(0).unwrap().as_str();
+        if let Some(url_match) = URL_REGEX.find(string) {
+            let url_match = url_match.as_str();
             let domain = extract_domain(url_match);
 
             if !domain.is_empty()
                 && !self.is_good_link(&domain)
                 && !self.is_suspicious_domain(&domain)
+                && !self.is_local_host(&domain)
             {
                 if is_known_good_ip(&domain) {
                     return;
@@ -121,6 +117,16 @@ impl CollapseScanner {
                 findings.push((FindingType::Url, url_match.to_string()));
             }
         }
+    }
+
+    fn is_local_host(&self, host: &str) -> bool {
+        let lower = host.to_lowercase();
+        lower == "localhost"
+            || lower.ends_with(".local")
+            || lower.ends_with(".lan")
+            || lower.ends_with(".internal")
+            || lower.ends_with(".home")
+            || lower.ends_with(".localdomain")
     }
 
     fn check_suspicious_url_patterns(
@@ -174,8 +180,8 @@ impl CollapseScanner {
     }
 
     fn check_malicious_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if let Some(cap) = MALICIOUS_PATTERN_REGEX.captures(string) {
-            let keyword = cap.get(0).unwrap().as_str();
+        if let Some(keyword) = MALICIOUS_PATTERN_REGEX.find(string) {
+            let keyword = keyword.as_str();
             let keyword_lower = keyword.to_lowercase();
             if !self.ignored_suspicious_keywords.contains(&keyword_lower) {
                 findings.push((
@@ -188,10 +194,12 @@ impl CollapseScanner {
 
     fn check_all_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) -> bool {
         let initial_len = findings.len();
+        let has_url = URL_REGEX.is_match(string);
+        let has_network = has_url || IP_REGEX.is_match(string) || IPV6_REGEX.is_match(string);
 
-        if IP_REGEX.is_match(string) || IPV6_REGEX.is_match(string) || URL_REGEX.is_match(string) {
+        if has_network {
             self.check_network_patterns(string, findings);
-            if URL_REGEX.is_match(string) {
+            if has_url {
                 self.check_suspicious_url_patterns(string, findings);
             }
         } else if MALICIOUS_PATTERN_REGEX.is_match(string) {
@@ -326,7 +334,7 @@ impl CollapseScanner {
 
         let mut type_counts: HashMap<FindingType, usize> = HashMap::new();
         for (finding_type, _) in findings {
-            *type_counts.entry(finding_type.clone()).or_insert(0) += 1;
+            *type_counts.entry(*finding_type).or_insert(0) += 1;
         }
 
         if *type_counts.get(&FindingType::DiscordWebhook).unwrap_or(&0) > 0 {
@@ -406,7 +414,7 @@ impl CollapseScanner {
         let mut by_type: HashMap<FindingType, Vec<String>> = HashMap::new();
         for (finding_type, value) in findings {
             by_type
-                .entry(finding_type.clone())
+                .entry(*finding_type)
                 .or_default()
                 .push(value.clone());
         }
@@ -518,10 +526,9 @@ impl CollapseScanner {
         data_hash: u64,
         original_path_str: &str,
         resource_info: Option<ResourceInfo>,
-        findings: &mut Vec<(FindingType, String)>,
+        findings: &mut [(FindingType, String)],
     ) -> Result<Option<ScanResult>, ScanError> {
-        {
-            let mut found_flag = self.found_custom_jvm_indicator.lock().unwrap();
+        if let Ok(mut found_flag) = self.found_custom_jvm_indicator.lock() {
             *found_flag = true;
         }
 
@@ -534,7 +541,7 @@ impl CollapseScanner {
 
             Ok(Some(ScanResult {
                 file_path: original_path_str.to_string(),
-                matches: Arc::new(findings.clone()),
+                matches: Arc::new(findings.to_owned()),
                 class_details: None,
                 resource_info,
                 danger_score,
@@ -556,48 +563,20 @@ impl CollapseScanner {
             self.check_name_obfuscation(class_details, findings);
         }
 
-        let string_set: HashSet<&String> = class_details.strings.iter().collect();
+        let string_set: HashSet<&str> = class_details.strings.iter().map(String::as_str).collect();
 
-        if string_set.contains(&"Runtime".to_string()) {
+        if string_set.contains("Runtime") {
             findings.push((
                 FindingType::SuspiciousKeyword,
                 "Runtime execution (Runtime)".to_string(),
             ));
         }
 
-        if string_set.contains(&"loadLibrary".to_string()) {
-            findings.push((
-                FindingType::SuspiciousKeyword,
-                "Native library loading (loadLibrary)".to_string(),
-            ));
-        }
-
-        if string_set.contains(&"ProcessBuilder".to_string())
-            || string_set.contains(&"java/lang/ProcessBuilder".to_string())
+        if string_set.contains("ProcessBuilder") || string_set.contains("java/lang/ProcessBuilder")
         {
             findings.push((
                 FindingType::SuspiciousKeyword,
                 "ProcessBuilder usage".to_string(),
-            ));
-        }
-
-        if string_set.contains(&"getMethod".to_string())
-            && string_set.contains(&"invoke".to_string())
-        {
-            findings.push((
-                FindingType::SuspiciousKeyword,
-                "Reflection method invocation (getMethod + invoke)".to_string(),
-            ));
-        }
-
-        if (string_set.contains(&"socket".to_string())
-            || string_set.contains(&"bind".to_string())
-            || string_set.contains(&"connect".to_string()))
-            && self.options.mode != DetectionMode::Obfuscation
-        {
-            findings.push((
-                FindingType::SuspiciousKeyword,
-                "Low-level network API tokens (socket/bind/connect)".to_string(),
             ));
         }
 
@@ -622,163 +601,92 @@ impl CollapseScanner {
     ) {
         match self.options.mode {
             DetectionMode::All => {
-                let partials: Vec<Vec<(FindingType, String)>> = strings_to_scan
-                    .par_iter()
-                    .map(|s| {
-                        let mut local = Vec::new();
-                        let s_ref: &str = s.as_str();
-                        let s_to_check: &str;
-                        let mut truncated_due_to_boundary = false;
-                        if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
-                            if let Some(part) = s_ref.get(..Self::MAX_SCAN_STRING_LEN) {
-                                s_to_check = part;
-                            } else {
-                                let mut i = Self::MAX_SCAN_STRING_LEN;
-                                while i > 0 && !s_ref.is_char_boundary(i) {
-                                    i -= 1;
-                                }
-                                if i == 0 {
-                                    s_to_check = "";
-                                } else {
-                                    s_to_check = &s_ref[..i];
-                                    truncated_due_to_boundary = true;
-                                }
-                            }
-                        } else {
-                            s_to_check = s_ref;
-                        }
-                        if truncated_due_to_boundary {
-                            if self.options.verbose {
-                                println!(
-                                    "      Warning: possible obfuscated/non-UTF8 string truncated: {}",
-                                    truncate_string(s_ref, 60)
-                                );
-                            }
-                            local.push((
-                                FindingType::ObfuscationUnicode,
-                                format!(
-                                    "Obfuscated string truncated: {}",
-                                    truncate_string(s_ref, 60)
-                                ),
-                            ));
-                        }
-
-                        if self.check_all_patterns(s_to_check, &mut local) {
-                            cache_safe_string(s_ref);
-                        }
-                        local
-                    })
-                    .collect();
-                for mut p in partials {
-                    findings.append(&mut p);
-                }
+                self.scan_strings_parallel(strings_to_scan, findings, Self::check_all_patterns);
             }
             DetectionMode::Network => {
-                let partials: Vec<Vec<(FindingType, String)>> = strings_to_scan
-                    .par_iter()
-                    .map(|s| {
-                        let mut local = Vec::new();
-                        let s_ref: &str = s.as_str();
-                        let s_to_check: &str;
-                        let mut truncated_due_to_boundary = false;
-                        if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
-                            if let Some(part) = s_ref.get(..Self::MAX_SCAN_STRING_LEN) {
-                                s_to_check = part;
-                            } else {
-                                let mut i = Self::MAX_SCAN_STRING_LEN;
-                                while i > 0 && !s_ref.is_char_boundary(i) {
-                                    i -= 1;
-                                }
-                                if i == 0 {
-                                    s_to_check = "";
-                                } else {
-                                    s_to_check = &s_ref[..i];
-                                    truncated_due_to_boundary = true;
-                                }
-                            }
-                        } else {
-                            s_to_check = s_ref;
-                        }
-                        if truncated_due_to_boundary {
-                            if self.options.verbose {
-                                println!(
-                                    "      Warning: possible obfuscated/non-UTF8 string truncated: {}",
-                                    truncate_string(s_ref, 60)
-                                );
-                            }
-                            local.push((
-                                FindingType::ObfuscationUnicode,
-                                format!(
-                                    "Obfuscated string truncated: {}",
-                                    truncate_string(s_ref, 60)
-                                ),
-                            ));
-                        }
-
-                        if self.check_network_patterns_combined(s_to_check, &mut local) {
-                            cache_safe_string(s_ref);
-                        }
-                        local
-                    })
-                    .collect();
-                for mut p in partials {
-                    findings.append(&mut p);
-                }
+                self.scan_strings_parallel(
+                    strings_to_scan,
+                    findings,
+                    Self::check_network_patterns_combined,
+                );
             }
             DetectionMode::Malicious => {
-                let partials: Vec<Vec<(FindingType, String)>> = strings_to_scan
-                    .par_iter()
-                    .map(|s| {
-                        let mut local = Vec::new();
-                        let s_ref: &str = s.as_str();
-                        let s_to_check: &str;
-                        let mut truncated_due_to_boundary = false;
-                        if s_ref.len() > Self::MAX_SCAN_STRING_LEN {
-                            if let Some(part) = s_ref.get(..Self::MAX_SCAN_STRING_LEN) {
-                                s_to_check = part;
-                            } else {
-                                let mut i = Self::MAX_SCAN_STRING_LEN;
-                                while i > 0 && !s_ref.is_char_boundary(i) {
-                                    i -= 1;
-                                }
-                                if i == 0 {
-                                    s_to_check = "";
-                                } else {
-                                    s_to_check = &s_ref[..i];
-                                    truncated_due_to_boundary = true;
-                                }
-                            }
-                        } else {
-                            s_to_check = s_ref;
-                        }
-                        if truncated_due_to_boundary {
-                            if self.options.verbose {
-                                println!(
-                                    "      Warning: possible obfuscated/non-UTF8 string truncated: {}",
-                                    truncate_string(s_ref, 60)
-                                );
-                            }
-                            local.push((
-                                FindingType::ObfuscationUnicode,
-                                format!(
-                                    "Obfuscated string truncated: {}",
-                                    truncate_string(s_ref, 60)
-                                ),
-                            ));
-                        }
-
-                        if self.check_malicious_patterns_only(s_to_check, &mut local) {
-                            cache_safe_string(s_ref);
-                        }
-                        local
-                    })
-                    .collect();
-                for mut p in partials {
-                    findings.append(&mut p);
-                }
+                self.scan_strings_parallel(
+                    strings_to_scan,
+                    findings,
+                    Self::check_malicious_patterns_only,
+                );
             }
             _ => {}
         }
+    }
+
+    fn scan_strings_parallel(
+        &self,
+        strings_to_scan: &[&String],
+        findings: &mut Vec<(FindingType, String)>,
+        check_fn: fn(&Self, &str, &mut Vec<(FindingType, String)>) -> bool,
+    ) {
+        let partials: Vec<Vec<(FindingType, String)>> = strings_to_scan
+            .par_iter()
+            .map(|s| {
+                let mut local = Vec::new();
+                let s_ref = s.as_str();
+                let (s_to_check, truncated_due_to_boundary) = self.truncate_scan_string(s_ref);
+
+                if truncated_due_to_boundary {
+                    self.push_truncation_finding(s_ref, &mut local);
+                }
+
+                if check_fn(self, s_to_check, &mut local) {
+                    cache_safe_string(s_ref);
+                }
+
+                local
+            })
+            .collect();
+
+        for mut partial in partials {
+            findings.append(&mut partial);
+        }
+    }
+
+    fn truncate_scan_string<'a>(&self, input: &'a str) -> (&'a str, bool) {
+        if input.len() <= Self::MAX_SCAN_STRING_LEN {
+            return (input, false);
+        }
+
+        if input.is_char_boundary(Self::MAX_SCAN_STRING_LEN) {
+            return (&input[..Self::MAX_SCAN_STRING_LEN], false);
+        }
+
+        let mut end = Self::MAX_SCAN_STRING_LEN;
+        while end > 0 && !input.is_char_boundary(end) {
+            end -= 1;
+        }
+
+        if end == 0 {
+            ("", false)
+        } else {
+            (&input[..end], true)
+        }
+    }
+
+    fn push_truncation_finding(&self, s_ref: &str, findings: &mut Vec<(FindingType, String)>) {
+        if self.options.verbose {
+            println!(
+                "      Warning: possible obfuscated/non-UTF8 string truncated: {}",
+                truncate_string(s_ref, 60)
+            );
+        }
+
+        findings.push((
+            FindingType::ObfuscationUnicode,
+            format!(
+                "Obfuscated string truncated: {}",
+                truncate_string(s_ref, 60)
+            ),
+        ));
     }
 
     fn create_scan_result(

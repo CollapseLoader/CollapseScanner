@@ -20,7 +20,11 @@ fn check_bounds(
             path: path.to_string(),
             msg: format!(
                 "EOF Error: Needed {} bytes for '{}' at pos {}, but only {} bytes remain (total len {})",
-                needed, context, current_pos, data_len - current_pos, data_len
+                needed,
+                context,
+                current_pos,
+                data_len.saturating_sub(current_pos),
+                data_len
             ),
         })
     } else {
@@ -28,12 +32,155 @@ fn check_bounds(
     }
 }
 
+fn resolve_utf8<'a>(
+    pool: &'a [ConstantPoolEntry],
+    index: u16,
+    path: &str,
+    context: &str,
+) -> Result<&'a str, ScanError> {
+    if index == 0 || (index as usize) > pool.len() {
+        return Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!(
+                "Invalid CP index {} (0-based) for UTF8 resolve ('{}'). Pool size: {}.",
+                index,
+                context,
+                pool.len()
+            ),
+        });
+    }
+
+    match &pool[index as usize - 1] {
+        ConstantPoolEntry::Utf8(s) => Ok(s),
+        other => Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!(
+                "Expected UTF8 at CP index {} ('{}'), found {:?}",
+                index, context, other
+            ),
+        }),
+    }
+}
+
+fn resolve_class_name(
+    pool: &[ConstantPoolEntry],
+    index: u16,
+    path: &str,
+    context: &str,
+) -> Result<String, ScanError> {
+    if index == 0 {
+        if context == "super_class" {
+            return Ok("java/lang/Object".to_string());
+        }
+
+        return Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!("Invalid CP index 0 for class reference ('{}')", context),
+        });
+    }
+
+    if (index as usize) > pool.len() {
+        return Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!(
+                "Invalid CP index {} (0-based) for Class resolve ('{}'). Pool size: {}.",
+                index,
+                context,
+                pool.len()
+            ),
+        });
+    }
+
+    match &pool[index as usize - 1] {
+        ConstantPoolEntry::Class(name_index) => {
+            let class_name_context = format!("name for Class at {} ('{}')", index, context);
+            Ok(resolve_utf8(pool, *name_index, path, &class_name_context)?.to_owned())
+        }
+        other => Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!(
+                "Expected Class info at CP index {} ('{}'), found {:?}",
+                index, context, other
+            ),
+        }),
+    }
+}
+
+fn parse_members<T, F>(
+    cursor: &mut Cursor<&[u8]>,
+    count: u16,
+    file_path_str: &str,
+    verbose: bool,
+    member_kind: &str,
+    pool: &[ConstantPoolEntry],
+    make_member: F,
+) -> Result<Vec<T>, ScanError>
+where
+    F: Fn(String, String, u16) -> T,
+{
+    let mut members = Vec::with_capacity(count as usize);
+    let invalid_name_prefix = match member_kind {
+        "field" => "INVALID_FIELD_NAME_INDEX",
+        "method" => "INVALID_METHOD_NAME_INDEX",
+        _ => "INVALID_MEMBER_NAME_INDEX",
+    };
+
+    for index in 0..count {
+        check_bounds(
+            cursor,
+            8,
+            file_path_str,
+            &format!("{} header {}", member_kind, index),
+        )?;
+        let access_flags = cursor.read_u16::<BigEndian>()?;
+        let name_index = cursor.read_u16::<BigEndian>()?;
+        let descriptor_index = cursor.read_u16::<BigEndian>()?;
+        let attributes_count = cursor.read_u16::<BigEndian>()?;
+
+        let name_context = format!("{} {} name", member_kind, index);
+        let descriptor_context = format!("{} {} descriptor", member_kind, index);
+
+        let name = resolve_utf8(pool, name_index, file_path_str, &name_context)
+            .map(str::to_owned)
+            .unwrap_or_else(|e| {
+                if verbose {
+                    eprintln!(
+                        "{} {} name resolution error: {}",
+                        "⚠️".yellow(),
+                        member_kind,
+                        e
+                    );
+                }
+                format!("<{}_{}>", invalid_name_prefix, name_index)
+            });
+
+        let descriptor = resolve_utf8(pool, descriptor_index, file_path_str, &descriptor_context)
+            .map(str::to_owned)
+            .unwrap_or_else(|e| {
+                if verbose {
+                    eprintln!(
+                        "{} {} descriptor resolution error: {}",
+                        "⚠️".yellow(),
+                        member_kind,
+                        e
+                    );
+                }
+                format!("<INVALID_DESCRIPTOR_INDEX_{}>", descriptor_index)
+            });
+
+        skip_attributes(cursor, attributes_count, file_path_str)?;
+        members.push(make_member(name, descriptor, access_flags));
+    }
+
+    Ok(members)
+}
+
 fn parse_constant_pool(
     cursor: &mut Cursor<&[u8]>,
     cp_count: u16,
     file_path_str: &str,
 ) -> Result<Vec<ConstantPoolEntry>, ScanError> {
-    if cp_count < 1 {
+    if cp_count == 0 {
         return Err(ScanError::ClassParseError {
             path: file_path_str.to_string(),
             msg: format!("Invalid constant pool count: {}", cp_count),
@@ -205,10 +352,8 @@ fn skip_attributes(
     cursor: &mut Cursor<&[u8]>,
     attributes_count: u16,
     file_path_str: &str,
-    _member_type: &str,
-    _member_index: u16,
 ) -> Result<(), ScanError> {
-    for _attr_index in 0..attributes_count {
+    for _ in 0..attributes_count {
         check_bounds(cursor, 6, file_path_str, "attribute header")?;
         let _attribute_name_index = cursor.read_u16::<BigEndian>()?;
         let attribute_length = cursor.read_u32::<BigEndian>()? as u64;
@@ -261,72 +406,6 @@ pub fn parse_class_structure(
 
     let constant_pool = parse_constant_pool(&mut cursor, cp_count, original_path_str)?;
 
-    let resolve_utf8 =
-        |pool: &[ConstantPoolEntry], index: u16, context: &str| -> Result<String, ScanError> {
-            if index == 0 || (index as usize) > pool.len() {
-                return Err(ScanError::ClassParseError {
-                    path: original_path_str.to_string(),
-                    msg: format!(
-                        "Invalid CP index {} (0-based) for UTF8 resolve ('{}'). Pool size: {}.",
-                        index,
-                        context,
-                        pool.len()
-                    ),
-                });
-            }
-            match &pool[index as usize - 1] {
-                ConstantPoolEntry::Utf8(s) => Ok(s.clone()),
-                other => Err(ScanError::ClassParseError {
-                    path: original_path_str.to_string(),
-                    msg: format!(
-                        "Expected UTF8 at CP index {} ('{}'), found {:?}",
-                        index, context, other
-                    ),
-                }),
-            }
-        };
-
-    let resolve_class_name =
-        |pool: &[ConstantPoolEntry], index: u16, context: &str| -> Result<String, ScanError> {
-            if index == 0 {
-                if context == "super_class" {
-                    return Ok("java/lang/Object".to_string());
-                } else {
-                    return Err(ScanError::ClassParseError {
-                        path: original_path_str.to_string(),
-                        msg: format!("Invalid CP index 0 for class reference ('{}')", context),
-                    });
-                }
-            }
-
-            if (index as usize) > pool.len() {
-                return Err(ScanError::ClassParseError {
-                    path: original_path_str.to_string(),
-                    msg: format!(
-                        "Invalid CP index {} (0-based) for Class resolve ('{}'). Pool size: {}.",
-                        index,
-                        context,
-                        pool.len()
-                    ),
-                });
-            }
-
-            match &pool[index as usize - 1] {
-                ConstantPoolEntry::Class(name_index) => resolve_utf8(
-                    pool,
-                    *name_index,
-                    &format!("name for Class at {} ('{}')", index, context),
-                ),
-                other => Err(ScanError::ClassParseError {
-                    path: original_path_str.to_string(),
-                    msg: format!(
-                        "Expected Class info at CP index {} ('{}'), found {:?}",
-                        index, context, other
-                    ),
-                }),
-            }
-        };
-
     check_bounds(
         &cursor,
         6,
@@ -337,8 +416,18 @@ pub fn parse_class_structure(
     let this_class_index = cursor.read_u16::<BigEndian>()?;
     let super_class_index = cursor.read_u16::<BigEndian>()?;
 
-    let class_name = resolve_class_name(&constant_pool, this_class_index, "this_class")?;
-    let superclass_name = resolve_class_name(&constant_pool, super_class_index, "super_class")?;
+    let class_name = resolve_class_name(
+        &constant_pool,
+        this_class_index,
+        original_path_str,
+        "this_class",
+    )?;
+    let superclass_name = resolve_class_name(
+        &constant_pool,
+        super_class_index,
+        original_path_str,
+        "super_class",
+    )?;
 
     check_bounds(&cursor, 2, original_path_str, "interfaces_count")?;
     let interfaces_count = cursor.read_u16::<BigEndian>()?;
@@ -355,138 +444,73 @@ pub fn parse_class_structure(
         interfaces.push(resolve_class_name(
             &constant_pool,
             interface_index,
+            original_path_str,
             &format!("interface {}", i),
         )?);
     }
 
     check_bounds(&cursor, 2, original_path_str, "fields_count")?;
     let fields_count = cursor.read_u16::<BigEndian>()?;
-    let mut fields = Vec::with_capacity(fields_count as usize);
-    for f_idx in 0..fields_count {
-        check_bounds(
-            &cursor,
-            8,
-            original_path_str,
-            &format!("field header {}", f_idx),
-        )?;
-        let field_access_flags = cursor.read_u16::<BigEndian>()?;
-        let name_index = cursor.read_u16::<BigEndian>()?;
-        let descriptor_index = cursor.read_u16::<BigEndian>()?;
-        let attributes_count = cursor.read_u16::<BigEndian>()?;
-
-        let field_name = resolve_utf8(&constant_pool, name_index, &format!("field {} name", f_idx))
-            .unwrap_or_else(|e| {
-                if verbose {
-                    eprintln!("{} Field name resolution error: {}", "⚠️".yellow(), e);
-                }
-                format!("<INVALID_FIELD_NAME_INDEX_{}>", name_index)
-            });
-        let field_descriptor = resolve_utf8(
-            &constant_pool,
-            descriptor_index,
-            &format!("field {} descriptor", f_idx),
-        )
-        .unwrap_or_else(|e| {
-            if verbose {
-                eprintln!("{} Field descriptor resolution error: {}", "⚠️".yellow(), e);
-            }
-            format!("<INVALID_DESCRIPTOR_INDEX_{}>", descriptor_index)
-        });
-
-        skip_attributes(
-            &mut cursor,
-            attributes_count,
-            original_path_str,
-            "field",
-            f_idx,
-        )?;
-        fields.push(FieldInfo {
-            name: field_name,
-            descriptor: field_descriptor,
-            access_flags: field_access_flags,
-        });
-    }
+    let fields = parse_members(
+        &mut cursor,
+        fields_count,
+        original_path_str,
+        verbose,
+        "field",
+        &constant_pool,
+        |name, descriptor, access_flags| FieldInfo {
+            name,
+            descriptor,
+            access_flags,
+        },
+    )?;
 
     check_bounds(&cursor, 2, original_path_str, "methods_count")?;
     let methods_count = cursor.read_u16::<BigEndian>()?;
-    let mut methods = Vec::with_capacity(methods_count as usize);
-    for m_idx in 0..methods_count {
-        check_bounds(
-            &cursor,
-            8,
-            original_path_str,
-            &format!("method header {}", m_idx),
-        )?;
-        let method_access_flags = cursor.read_u16::<BigEndian>()?;
-        let name_index = cursor.read_u16::<BigEndian>()?;
-        let descriptor_index = cursor.read_u16::<BigEndian>()?;
-        let attributes_count = cursor.read_u16::<BigEndian>()?;
+    let methods = parse_members(
+        &mut cursor,
+        methods_count,
+        original_path_str,
+        verbose,
+        "method",
+        &constant_pool,
+        |name, descriptor, access_flags| MethodInfo {
+            name,
+            descriptor,
+            access_flags,
+        },
+    )?;
 
-        let method_name = resolve_utf8(
+    let mut string_set: HashSet<String> = constant_pool
+        .iter()
+        .filter_map(|entry| match entry {
+            ConstantPoolEntry::Utf8(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+
+    for utf8_index in constant_pool.iter().filter_map(|entry| match entry {
+        ConstantPoolEntry::String(index) => Some(*index),
+        _ => None,
+    }) {
+        match resolve_utf8(
             &constant_pool,
-            name_index,
-            &format!("method {} name", m_idx),
-        )
-        .unwrap_or_else(|e| {
-            if verbose {
-                eprintln!("{} Method name resolution error: {}", "⚠️".yellow(), e);
-            }
-            format!("<INVALID_METHOD_NAME_INDEX_{}>", name_index)
-        });
-        let method_descriptor = resolve_utf8(
-            &constant_pool,
-            descriptor_index,
-            &format!("method {} descriptor", m_idx),
-        )
-        .unwrap_or_else(|e| {
-            if verbose {
-                eprintln!(
-                    "{} Method descriptor resolution error: {}",
-                    "⚠️".yellow(),
-                    e
-                );
-            }
-            format!("<INVALID_DESCRIPTOR_INDEX_{}>", descriptor_index)
-        });
-
-        skip_attributes(
-            &mut cursor,
-            attributes_count,
+            utf8_index,
             original_path_str,
-            "method",
-            m_idx,
-        )?;
-        methods.push(MethodInfo {
-            name: method_name,
-            descriptor: method_descriptor,
-            access_flags: method_access_flags,
-        });
-    }
-
-    let mut string_set = HashSet::with_capacity(constant_pool.len() / 4);
-    for entry in &constant_pool {
-        match entry {
-            ConstantPoolEntry::String(utf8_index) => {
-                match resolve_utf8(&constant_pool, *utf8_index, "String constant data") {
-                    Ok(s) => {
-                        string_set.insert(s);
-                    }
-                    Err(e) => {
-                        if verbose {
-                            eprintln!(
-                                "{} String constant data resolution error: {}",
-                                "⚠️".yellow(),
-                                e
-                            );
-                        }
-                    }
+            "String constant data",
+        ) {
+            Ok(s) => {
+                string_set.insert(s.to_owned());
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!(
+                        "{} String constant data resolution error: {}",
+                        "⚠️".yellow(),
+                        e
+                    );
                 }
             }
-
-            ConstantPoolEntry::Utf8(s) => {
-                string_set.insert(s.clone());
-            }
-            _ => {}
         }
     }
     let strings: Vec<String> = string_set.into_iter().collect();

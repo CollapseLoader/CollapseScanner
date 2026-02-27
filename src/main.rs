@@ -89,9 +89,6 @@ struct Args {
 
     #[clap(long, value_parser)]
     max_file_size: Option<usize>,
-
-    #[clap(long, action = clap::ArgAction::SetTrue)]
-    show: bool,
 }
 
 #[cfg(all(feature = "cli", not(feature = "gui")))]
@@ -482,75 +479,8 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
                 for result in &sorted_significant_results {
                     for (finding_type, _) in result.matches.iter() {
-                        *findings_by_type.entry(finding_type.clone()).or_insert(0) += 1;
+                        *findings_by_type.entry(*finding_type).or_insert(0) += 1;
                         total_findings += 1;
-                    }
-                }
-
-                if args.show {
-                    println!(
-                    "\n{}",
-                    "╔══════════════════════════════════════════════════════════════════════════════╗"
-                        .bright_blue()
-                        .bold()
-                    );
-                    println!(
-                    "{}",
-                    "║                              FINDINGS REPORT                                 ║"
-                        .bright_blue()
-                        .bold()
-                    );
-                    println!(
-                    "{}",
-                    "╚══════════════════════════════════════════════════════════════════════════════╝"
-                        .bright_blue()
-                        .bold()
-                    );
-
-                    let mut findings_by_type: HashMap<FindingType, Vec<(String, String)>> =
-                        HashMap::new();
-
-                    for result in &sorted_significant_results {
-                        for (finding_type, value) in result.matches.iter() {
-                            findings_by_type
-                                .entry(finding_type.clone())
-                                .or_default()
-                                .push((result.file_path.clone(), value.clone()));
-                        }
-                    }
-
-                    let mut finding_types: Vec<FindingType> =
-                        findings_by_type.keys().cloned().collect();
-                    finding_types.sort_by_key(|t| t.to_string());
-
-                    for ftype in &finding_types {
-                        let entries = findings_by_type.get(ftype).unwrap();
-                        let (icon, color) = ftype.with_emoji();
-
-                        println!(
-                            "\n  {} {} ({})",
-                            icon.color(color).bold(),
-                            ftype.to_string().color(color).bold(),
-                            entries.len().to_string().bright_white()
-                        );
-
-                        let mut sorted_entries = entries.clone();
-                        sorted_entries.sort_by(|a, b| {
-                            let file_cmp = a.0.cmp(&b.0);
-                            if file_cmp == std::cmp::Ordering::Equal {
-                                a.1.cmp(&b.1)
-                            } else {
-                                file_cmp
-                            }
-                        });
-
-                        for (file_path, value) in sorted_entries {
-                            println!(
-                                "    • {}: {}",
-                                file_path.bright_cyan(),
-                                value.bright_white()
-                            );
-                        }
                     }
                 }
 
@@ -621,7 +551,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                     for result in &sorted_significant_results {
                         for (finding_type, value) in result.matches.iter() {
                             all_findings
-                                .entry(finding_type.clone())
+                                .entry(*finding_type)
                                 .or_default()
                                 .insert(value.clone());
                         }
@@ -640,25 +570,9 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                         let mut sorted_values: Vec<&String> = values.iter().collect();
                         sorted_values.sort();
 
-                        for (i, value) in sorted_values.iter().enumerate() {
-                            if i < 5 {
-                                println!("    • {}", value.bright_white());
-                            } else if i == 5 {
-                                println!(
-                                    "    • ... and {} more",
-                                    (values.len() - 5).to_string().dimmed()
-                                );
-                                break;
-                            }
+                        for value in sorted_values.iter() {
+                            println!("    • {}", value.bright_white());
                         }
-                    }
-
-                    if !args.show {
-                        println!(
-                            "\n{} {}",
-                            "💡".cyan().bold(),
-                            "Tip: Use the '--show' flag to display detailed findings.".cyan()
-                        );
                     }
                 } else {
                     let scan_duration = scan_start_time.elapsed();

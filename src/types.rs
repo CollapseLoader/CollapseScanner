@@ -43,27 +43,7 @@ pub struct Progress {
     pub cancelled: bool,
 }
 
-#[cfg(feature = "gui")]
-impl Progress {
-    pub fn new() -> Self {
-        Self {
-            current: 0,
-            total: 0,
-            message: String::from("Ready to scan"),
-            cancelled: false,
-        }
-    }
-
-    pub fn percentage(&self) -> f32 {
-        if self.total == 0 {
-            0.0
-        } else {
-            (self.current as f32 / self.total as f32) * 100.0
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum FindingType {
     IpAddress,
     IpV6Address,
@@ -71,6 +51,11 @@ pub enum FindingType {
     SuspiciousUrl,
     DiscordWebhook,
     SuspiciousKeyword,
+    SuspiciousApi,
+    EncodedPayload,
+    TamperedClass,
+    NativeLibrary,
+    SuspiciousArchiveEntry,
     ObfuscationUnicode,
 }
 
@@ -83,21 +68,30 @@ impl std::fmt::Display for FindingType {
             FindingType::SuspiciousUrl => write!(f, "Suspicious URL"),
             FindingType::DiscordWebhook => write!(f, "Discord Webhook"),
             FindingType::SuspiciousKeyword => write!(f, "Suspicious Keyword"),
+            FindingType::SuspiciousApi => write!(f, "Suspicious Java API"),
+            FindingType::EncodedPayload => write!(f, "Encoded Payload"),
+            FindingType::TamperedClass => write!(f, "Tampered Class"),
+            FindingType::NativeLibrary => write!(f, "Native Library"),
+            FindingType::SuspiciousArchiveEntry => write!(f, "Suspicious Archive Entry"),
             FindingType::ObfuscationUnicode => write!(f, "Obfuscation (Unicode Name)"),
         }
     }
 }
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 impl FindingType {
-    pub fn with_emoji(&self) -> (&'static str, &'static str) {
+    pub fn with_symbol(&self) -> (&'static str, &'static str) {
         match self {
-            FindingType::IpAddress | FindingType::IpV6Address => ("🌐", "red"),
-            FindingType::Url => ("🔗", "blue"),
-            FindingType::SuspiciousUrl => ("⚠️ ", "yellow"),
-            FindingType::DiscordWebhook => ("🤖", "red"),
-            FindingType::SuspiciousKeyword => ("❗", "red"),
-            FindingType::ObfuscationUnicode => ("㊙️ ", "magenta"),
+            FindingType::IpAddress | FindingType::IpV6Address => ("◆", "red"),
+            FindingType::Url => ("◇", "blue"),
+            FindingType::SuspiciousUrl => ("▲ ", "yellow"),
+            FindingType::DiscordWebhook => ("■", "red"),
+            FindingType::SuspiciousKeyword => ("●", "red"),
+            FindingType::SuspiciousApi => ("⬢", "yellow"),
+            FindingType::EncodedPayload => ("◈", "magenta"),
+            FindingType::TamperedClass => ("✖", "red"),
+            FindingType::NativeLibrary => ("▣", "yellow"),
+            FindingType::SuspiciousArchiveEntry => ("▦", "yellow"),
+            FindingType::ObfuscationUnicode => ("◌ ", "magenta"),
         }
     }
 }
@@ -110,6 +104,11 @@ impl FindingType {
             FindingType::SuspiciousUrl => 5,
             FindingType::DiscordWebhook => 10,
             FindingType::SuspiciousKeyword => 3,
+            FindingType::SuspiciousApi => 4,
+            FindingType::EncodedPayload => 5,
+            FindingType::TamperedClass => 6,
+            FindingType::NativeLibrary => 4,
+            FindingType::SuspiciousArchiveEntry => 4,
             FindingType::ObfuscationUnicode => 1,
         }
     }
@@ -120,6 +119,11 @@ impl FindingType {
             FindingType::IpAddress | FindingType::IpV6Address => 6,
             FindingType::Url => 6,
             FindingType::SuspiciousKeyword => 6,
+            FindingType::SuspiciousApi => 8,
+            FindingType::EncodedPayload => 8,
+            FindingType::TamperedClass => 10,
+            FindingType::NativeLibrary => 7,
+            FindingType::SuspiciousArchiveEntry => 8,
             FindingType::ObfuscationUnicode => 4,
             FindingType::DiscordWebhook => 10,
         }
@@ -159,8 +163,7 @@ pub struct ResourceInfo {
     pub is_dead_class_candidate: bool,
 }
 
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, clap::ValueEnum)]
 pub enum DetectionMode {
     Network,
     Malicious,
@@ -205,7 +208,7 @@ impl Default for ScannerOptions {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum ConstantPoolEntry {
-    Utf8(String),
+    Utf8(std::sync::Arc<str>),
     Integer,
     Float,
     Long,

@@ -3,8 +3,7 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
-use colored::Colorize;
-
+use crate::config::SYSTEM_CONFIG;
 use crate::errors::ScanError;
 use crate::scanner::scan::CollapseScanner;
 use crate::types::ScanResult;
@@ -17,11 +16,7 @@ impl CollapseScanner {
             .any(|pattern| pattern.matches(internal_path))
         {
             if self.options.verbose {
-                println!(
-                    "{} Skipping excluded file: {}",
-                    "🚫".dimmed(),
-                    internal_path
-                );
+                println!("[-] Skipping excluded file: {}", internal_path);
             }
             return false;
         }
@@ -56,27 +51,33 @@ impl CollapseScanner {
     }
 
     pub fn scan_path(&self, path: &Path) -> Result<Vec<ScanResult>, ScanError> {
+        if let Ok(metadata) = fs::metadata(path) {
+            let file_size_mb = metadata.len() / (1024 * 1024);
+            if file_size_mb > SYSTEM_CONFIG.max_file_size as u64 {
+                if self.options.verbose {
+                    println!(
+                        "(!) Skipping file larger than {} MB: {}",
+                        SYSTEM_CONFIG.max_file_size,
+                        path.display()
+                    );
+                }
+                return Ok(Vec::new());
+            }
+        }
+
         if path.extension().is_some_and(|ext| ext == "jar") {
             self.scan_jar_file(path)
         } else if path.extension().is_some_and(|ext| ext == "class") {
             let filename = path.file_name().unwrap_or_default().to_string_lossy();
             if !self.should_scan(&filename) {
                 if self.options.verbose {
-                    println!(
-                        "{} Skipping filtered file: {}",
-                        "🚫".dimmed(),
-                        path.display()
-                    );
+                    println!("[-] Skipping filtered file: {}", filename);
                 }
                 return Ok(Vec::new());
             }
 
             if self.options.verbose {
-                println!(
-                    "{} Scanning loose class file: {}",
-                    "📄".blue(),
-                    path.display()
-                );
+                println!("[*] Scanning loose class file: {}", path.display());
             }
             let file_data = fs::read(path)?;
             let resource_info = self.analyze_resource(&filename, &file_data)?;

@@ -13,6 +13,52 @@ use crate::scanner::scan::CollapseScanner;
 use crate::types::{ClassDetails, DetectionMode, FindingType, ResourceInfo, ScanResult};
 use crate::utils::{extract_domain, get_simple_name, truncate_string};
 
+const MIN_BASE64_BLOB_LEN: usize = 96;
+const MIN_HEX_BLOB_LEN: usize = 128;
+const BASE64_ENTROPY_THRESHOLD: f64 = 4.6;
+const HEX_ENTROPY_THRESHOLD: f64 = 3.2;
+
+const PROCESS_EXECUTION_MARKERS: &[&str] = &[
+    "java/lang/Runtime",
+    "Runtime",
+    "getRuntime",
+    "exec",
+    "ProcessBuilder",
+    "java/lang/ProcessBuilder",
+];
+
+const REFLECTION_MARKERS: &[&str] = &[
+    "java/lang/reflect/Method",
+    "java/lang/reflect/Field",
+    "java/lang/reflect/Constructor",
+    "setAccessible",
+    "invoke",
+];
+
+const DYNAMIC_LOADING_MARKERS: &[&str] = &[
+    "defineClass",
+    "URLClassLoader",
+    "MethodHandles$Lookup",
+    "Lookup.defineClass",
+];
+
+const SCRIPT_ENGINE_MARKERS: &[&str] =
+    &["javax/script/ScriptEngineManager", "javax/script/ScriptEngine"];
+
+const JAVA_AGENT_MARKERS: &[&str] = &[
+    "java/lang/instrument/Instrumentation",
+    "Premain-Class",
+    "Agent-Class",
+    "Launcher-Agent-Class",
+];
+
+const ATTACH_API_MARKERS: &[&str] = &[
+    "com/sun/tools/attach/VirtualMachine",
+    "sun/tools/attach/HotSpotVirtualMachine",
+];
+
+const NATIVE_BRIDGE_MARKERS: &[&str] = &["com/sun/jna/Native", "com/sun/jna/Library", "sun/misc/Unsafe"];
+
 impl CollapseScanner {
     const MAX_SCAN_STRING_LEN: usize = 2048;
     pub(crate) fn scan_class_file_data(
@@ -58,7 +104,11 @@ impl CollapseScanner {
 
         let mut findings = Vec::new();
 
-        if data.len() >= 2 && (data[0] != 0xCA || data[1] != 0xFE) {
+        let looks_like_class_path = original_path_str.ends_with(".class")
+            || original_path_str.ends_with(".class/");
+        let has_valid_class_magic = data.starts_with(b"\xCA\xFE\xBA\xBE");
+
+        if looks_like_class_path && !has_valid_class_magic {
             return self.handle_non_standard_class(
                 data,
                 data_hash,
@@ -75,6 +125,7 @@ impl CollapseScanner {
         let strings_to_scan = self.prepare_strings_for_scanning(&class_details);
 
         self.scan_strings_by_mode(&strings_to_scan, &mut findings);
+        self.normalize_findings(&mut findings);
 
         let _cached_arc = self
             .result_cache
@@ -192,6 +243,90 @@ impl CollapseScanner {
         }
     }
 
+    fn check_encoded_payloads(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
+        let candidate = string.trim();
+        if candidate.len() < MIN_BASE64_BLOB_LEN {
+            return;
+        }
+
+        if self.looks_like_base64_blob(candidate) {
+            findings.push((
+                FindingType::EncodedPayload,
+                format!("High-entropy Base64-like blob ({} chars)", candidate.len()),
+            ));
+            return;
+        }
+
+        if self.looks_like_hex_blob(candidate) {
+            findings.push((
+                FindingType::EncodedPayload,
+                format!("High-entropy hex blob ({} chars)", candidate.len()),
+            ));
+        }
+    }
+
+    fn looks_like_base64_blob(&self, input: &str) -> bool {
+        if input.len() < MIN_BASE64_BLOB_LEN || !input.len().is_multiple_of(4) {
+            return false;
+        }
+
+        let mut has_upper = false;
+        let mut has_lower = false;
+        let mut has_digit = false;
+
+        for byte in input.bytes() {
+            match byte {
+                b'A'..=b'Z' => has_upper = true,
+                b'a'..=b'z' => has_lower = true,
+                b'0'..=b'9' => has_digit = true,
+                b'+' | b'/' | b'=' => {}
+                _ => return false,
+            }
+        }
+
+        let padding_len = input.bytes().rev().take_while(|byte| *byte == b'=').count();
+        if padding_len > 2 || !has_upper || !has_lower || !has_digit {
+            return false;
+        }
+
+        self.estimate_entropy(input) >= BASE64_ENTROPY_THRESHOLD
+    }
+
+    fn looks_like_hex_blob(&self, input: &str) -> bool {
+        if input.len() < MIN_HEX_BLOB_LEN || !input.len().is_multiple_of(2) {
+            return false;
+        }
+
+        let mut has_alpha = false;
+        let mut has_digit = false;
+
+        for byte in input.bytes() {
+            match byte {
+                b'0'..=b'9' => has_digit = true,
+                b'a'..=b'f' | b'A'..=b'F' => has_alpha = true,
+                _ => return false,
+            }
+        }
+
+        has_alpha && has_digit && self.estimate_entropy(input) >= HEX_ENTROPY_THRESHOLD
+    }
+
+    fn estimate_entropy(&self, input: &str) -> f64 {
+        let mut counts = [0usize; 256];
+        for byte in input.bytes() {
+            counts[byte as usize] += 1;
+        }
+
+        let len = input.len() as f64;
+        counts
+            .iter()
+            .filter(|count| **count > 0)
+            .fold(0.0, |entropy, count| {
+                let probability = *count as f64 / len;
+                entropy - probability * probability.log2()
+            })
+    }
+
     fn check_all_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) -> bool {
         let initial_len = findings.len();
         let has_url = URL_REGEX.is_match(string);
@@ -202,9 +337,13 @@ impl CollapseScanner {
             if has_url {
                 self.check_suspicious_url_patterns(string, findings);
             }
-        } else if MALICIOUS_PATTERN_REGEX.is_match(string) {
+        }
+
+        if MALICIOUS_PATTERN_REGEX.is_match(string) {
             self.check_malicious_patterns(string, findings);
         }
+
+        self.check_encoded_payloads(string, findings);
 
         findings.len() == initial_len
     }
@@ -229,6 +368,7 @@ impl CollapseScanner {
     ) -> bool {
         let initial_len = findings.len();
         self.check_malicious_patterns(string, findings);
+        self.check_encoded_payloads(string, findings);
         findings.len() == initial_len
     }
 
@@ -317,13 +457,18 @@ impl CollapseScanner {
         self.result_cache.get(&hash)
     }
 
+    pub(crate) fn normalize_findings(&self, findings: &mut Vec<(FindingType, String)>) {
+        findings.sort_unstable();
+        findings.dedup();
+    }
+
     fn cache_findings_new(&self, hash: u64, findings: &[(FindingType, String)]) {
         let vec = findings.to_vec();
         let arc = Arc::new(vec);
         let _ = self.result_cache.get_with(hash, || arc.clone());
     }
 
-    fn calculate_danger_score(
+    pub(crate) fn calculate_danger_score(
         &self,
         findings: &[(FindingType, String)],
         resource_info: Option<&ResourceInfo>,
@@ -359,11 +504,34 @@ impl CollapseScanner {
         let suspicious_keyword_count = *type_counts
             .get(&FindingType::SuspiciousKeyword)
             .unwrap_or(&0);
+        let suspicious_api_count = *type_counts.get(&FindingType::SuspiciousApi).unwrap_or(&0);
+        let encoded_payload_count = *type_counts.get(&FindingType::EncodedPayload).unwrap_or(&0);
+        let tampered_class_count = *type_counts.get(&FindingType::TamperedClass).unwrap_or(&0);
+        let suspicious_archive_count = *type_counts
+            .get(&FindingType::SuspiciousArchiveEntry)
+            .unwrap_or(&0);
+        let native_library_count = *type_counts.get(&FindingType::NativeLibrary).unwrap_or(&0);
         let ip_address_count = *type_counts.get(&FindingType::IpAddress).unwrap_or(&0)
             + *type_counts.get(&FindingType::IpV6Address).unwrap_or(&0);
 
-        if suspicious_url_count > 0 && (suspicious_keyword_count > 0 || ip_address_count > 0) {
+        if suspicious_url_count > 0
+            && (suspicious_keyword_count > 0 || ip_address_count > 0 || suspicious_api_count > 0)
+        {
             score_acc += 5;
+        }
+
+        if encoded_payload_count > 0
+            && (suspicious_keyword_count > 0 || suspicious_api_count > 0 || suspicious_url_count > 0)
+        {
+            score_acc += 3;
+        }
+
+        if tampered_class_count > 0 {
+            score_acc += 2;
+        }
+
+        if suspicious_archive_count > 0 && native_library_count > 0 {
+            score_acc += 2;
         }
 
         if type_counts.len() >= 3 {
@@ -373,7 +541,7 @@ impl CollapseScanner {
         (score_acc as i32).clamp(1, 10) as u8
     }
 
-    fn generate_danger_explanation(
+    pub(crate) fn generate_danger_explanation(
         &self,
         score: u8,
         findings: &[(FindingType, String)],
@@ -385,9 +553,8 @@ impl CollapseScanner {
 
         let mut explanations = Vec::new();
 
-        let use_emoji = self.options.progress.is_none();
-        let warn_prefix = if use_emoji { "⚠️ " } else { "" };
-        let ok_prefix = if use_emoji { "✅ " } else { "" };
+        let warn_prefix = "(!) ";
+        let ok_prefix = "[+] ";
 
         if score >= 8 {
             explanations.push(format!(
@@ -482,6 +649,50 @@ impl CollapseScanner {
             }
         }
 
+        if let Some(api_markers) = by_type.get(&FindingType::SuspiciousApi) {
+            if !api_markers.is_empty() {
+                explanations.push(format!(
+                    "Uses {} high-risk Java API marker(s) related to command execution, reflection, class loading, or instrumentation.",
+                    api_markers.len()
+                ));
+            }
+        }
+
+        if let Some(encoded_payloads) = by_type.get(&FindingType::EncodedPayload) {
+            if !encoded_payloads.is_empty() {
+                explanations.push(format!(
+                    "Contains {} high-entropy encoded blob(s) that may hide payloads, encrypted configuration, or staged code.",
+                    encoded_payloads.len()
+                ));
+            }
+        }
+
+        if let Some(tampered_classes) = by_type.get(&FindingType::TamperedClass) {
+            if !tampered_classes.is_empty() {
+                explanations.push(
+                    "Contains malformed or non-standard class magic bytes. This is commonly used to evade static scanners and rely on a custom ClassLoader.".to_string()
+                );
+            }
+        }
+
+        if let Some(native_libraries) = by_type.get(&FindingType::NativeLibrary) {
+            if !native_libraries.is_empty() {
+                explanations.push(format!(
+                    "Bundles {} native library resource(s). Embedded native code should be reviewed carefully because it bypasses normal JVM bytecode inspection.",
+                    native_libraries.len()
+                ));
+            }
+        }
+
+        if let Some(archive_entries) = by_type.get(&FindingType::SuspiciousArchiveEntry) {
+            if !archive_entries.is_empty() {
+                explanations.push(format!(
+                    "Contains {} suspicious embedded resource(s) such as scripts, executables, agent manifests, or heavily packed files.",
+                    archive_entries.len()
+                ));
+            }
+        }
+
         if resource_info.is_some_and(|ri| ri.is_dead_class_candidate) {
             explanations.push(
                 "Contains custom JVM bytecode (0xDEAD) which may indicate use of a custom classloader to evade detection.".to_string()
@@ -522,12 +733,32 @@ impl CollapseScanner {
 
     fn handle_non_standard_class(
         &self,
-        _data: &[u8],
+        data: &[u8],
         data_hash: u64,
         original_path_str: &str,
         resource_info: Option<ResourceInfo>,
-        findings: &mut [(FindingType, String)],
+        findings: &mut Vec<(FindingType, String)>,
     ) -> Result<Option<ScanResult>, ScanError> {
+        let magic_preview = if data.is_empty() {
+            "empty file".to_string()
+        } else {
+            data.iter()
+                .take(4)
+                .map(|byte| format!("{:02X}", byte))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        let tampered_message = if data.starts_with(b"\xDE\xAD") {
+            "Non-standard class magic 0xDEAD detected; likely requires a custom ClassLoader"
+                .to_string()
+        } else {
+            format!("Invalid class magic bytes: {}", magic_preview)
+        };
+
+        findings.push((FindingType::TamperedClass, tampered_message));
+        self.normalize_findings(findings);
+
         if let Ok(mut found_flag) = self.found_custom_jvm_indicator.lock() {
             *found_flag = true;
         }
@@ -565,22 +796,62 @@ impl CollapseScanner {
 
         let string_set: HashSet<&str> = class_details.strings.iter().map(String::as_str).collect();
 
-        if string_set.contains("Runtime") {
-            findings.push((
-                FindingType::SuspiciousKeyword,
-                "Runtime execution (Runtime)".to_string(),
-            ));
-        }
-
-        if string_set.contains("ProcessBuilder") || string_set.contains("java/lang/ProcessBuilder")
-        {
-            findings.push((
-                FindingType::SuspiciousKeyword,
-                "ProcessBuilder usage".to_string(),
-            ));
-        }
+        self.record_api_usage(
+            &string_set,
+            PROCESS_EXECUTION_MARKERS,
+            "Process execution API usage",
+            findings,
+        );
+        self.record_api_usage(
+            &string_set,
+            REFLECTION_MARKERS,
+            "Reflection-based access",
+            findings,
+        );
+        self.record_api_usage(
+            &string_set,
+            DYNAMIC_LOADING_MARKERS,
+            "Dynamic class loading or definition",
+            findings,
+        );
+        self.record_api_usage(
+            &string_set,
+            SCRIPT_ENGINE_MARKERS,
+            "Script engine execution",
+            findings,
+        );
+        self.record_api_usage(
+            &string_set,
+            JAVA_AGENT_MARKERS,
+            "Java agent instrumentation",
+            findings,
+        );
+        self.record_api_usage(
+            &string_set,
+            ATTACH_API_MARKERS,
+            "JVM attach API usage",
+            findings,
+        );
+        self.record_api_usage(
+            &string_set,
+            NATIVE_BRIDGE_MARKERS,
+            "Native bridge or Unsafe API usage",
+            findings,
+        );
 
         drop(string_set);
+    }
+
+    fn record_api_usage(
+        &self,
+        string_set: &HashSet<&str>,
+        markers: &[&str],
+        message: &str,
+        findings: &mut Vec<(FindingType, String)>,
+    ) {
+        if markers.iter().any(|marker| string_set.contains(marker)) {
+            findings.push((FindingType::SuspiciousApi, message.to_string()));
+        }
     }
 
     fn prepare_strings_for_scanning<'a>(&self, class_details: &'a ClassDetails) -> Vec<&'a String> {
@@ -588,7 +859,7 @@ impl CollapseScanner {
             .strings
             .iter()
             .filter(|s| !s.is_empty() && s.len() >= 3 && !is_cached_safe_string(s))
-            .take(100)
+            .take(2000)
             .collect::<Vec<_>>();
 
         strings_to_scan
@@ -691,11 +962,13 @@ impl CollapseScanner {
 
     fn create_scan_result(
         &self,
-        findings: Vec<(FindingType, String)>,
+        mut findings: Vec<(FindingType, String)>,
         class_details: ClassDetails,
         original_path_str: &str,
         resource_info: Option<ResourceInfo>,
     ) -> Result<Option<ScanResult>, ScanError> {
+        self.normalize_findings(&mut findings);
+
         if !findings.is_empty() || self.options.verbose {
             let danger_score = self.calculate_danger_score(&findings, resource_info.as_ref());
             let danger_explanation =

@@ -6,22 +6,19 @@
 
 ### ✨ Benefits
 
--   **Scan multiple detection categories** 🔍:
+- **Scan multiple detection categories** 🔍:
+    - **Network**: Detect potentially malicious IPv4/IPv6 addresses and URLs
+    - **Malicious**: Identify suspicious code patterns (backdoors, exploits, etc.)
+    - **Obfuscation**: Detect obfuscated code and suspicious naming patterns
 
-    -   **Network**: Detect potentially malicious IPv4/IPv6 addresses and URLs
-    -   **Malicious**: Identify suspicious code patterns (backdoors, exploits, etc.)
-    -   **Obfuscation**: Detect obfuscated code and suspicious naming patterns
+- **Features** ⚙️:
+    - **Resource extraction**: Extract all resources from JAR files
+    - **String analysis**: Extract and analyze all strings from class files
 
--   **Features** ⚙️:
-
-    -   **Resource extraction**: Extract all resources from JAR files
-    -   **String analysis**: Extract and analyze all strings from class files
-
--   **Performance optimizations** 🚀:
-
-    -   **Multi-threading**: Parallel processing of files for faster scanning
-    -   **Path filtering**: Include or exclude paths matching patterns
-    -   **Custom ignore lists**: Skip specified suspicious keywords
+- **Performance optimizations** 🚀:
+    - **Multi-threading**: Parallel processing of files for faster scanning
+    - **Path filtering**: Include or exclude paths matching patterns
+    - **Custom ignore lists**: Skip specified suspicious keywords
 
 ## ⚙️ Installation
 
@@ -75,47 +72,38 @@ collapsescanner file.jar --ignore_keywords ignore_keywords.txt
 
 ## 🔍 Command-line Options
 
-| Option                         | Description                                                                         |
-| ------------------------------ | ----------------------------------------------------------------------------------- |
-| `path`                         | Path to a JAR file, class file, or directory to scan                                |
-| `--mode`                       | Detection mode: `network`, `malicious`, `obfuscation`, or `all` (default)           |
-| `--extract`                    | Extract all resources from JAR files                                                |
-| `--strings`                    | Extract all strings from class files                                                |
-| `--output`                     | Specify the output directory (default: ./extracted)                                 |
-| `--json`                       | Export results in JSON format                                                       |
-| `-v, --verbose`                | Enable verbose output (shows size, etc.)                                            |
-| `--threads`                    | Number of threads to use for parallel processing (0 = automatic based on CPU cores) |
-| `--exclude`                    | Exclude paths matching the wildcard pattern (can be used multiple times)            |
-| `--find`                       | Only scan paths matching the wildcard pattern (can be used multiple times)          |
-| `--ignore_keywords`            | Path to a .txt file with keywords to ignore (one per line)                          |
-| `--buffer-size-mb`             | Override the IO buffer size in MB (auto-selected by available memory if unset)      |
-| `--result-cache-size`          | Override the result cache entries (auto if unset)                                   |
-| `--safe-string-cache-capacity` | Override the string cache capacity (entries)                                        |
-| `--parallel-scanning`          | Force-enable parallel scanning (overrides automatic decision)                       |
-| `--no-parallel-scanning`       | Force-disable parallel scanning (explicitly disable)                                |
-| `--available-memory-mb`        | Override detected available memory (MB) for tuning/testing                          |
-| `--max_file_size`              | Maximum file size to scan (in MB). Files larger than this will be skipped.          |
+| Option              | Description                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------- |
+| `path`              | Path to a JAR file, class file, or directory to scan                                |
+| `--mode`            | Detection mode: `network`, `malicious`, `obfuscation`, or `all` (default)           |
+| `--extract`         | Extract all resources from JAR files                                                |
+| `--strings`         | Extract all strings from class files                                                |
+| `--output`          | Specify the output directory (default: ./extracted)                                 |
+| `--json`            | Export results in JSON format                                                       |
+| `-v, --verbose`     | Enable verbose output (shows size, etc.)                                            |
+| `--threads`         | Number of threads to use for parallel processing (0 = automatic based on CPU cores) |
+| `--exclude`         | Exclude paths matching the wildcard pattern (can be used multiple times)            |
+| `--find`            | Only scan paths matching the wildcard pattern (can be used multiple times)          |
+| `--ignore_keywords` | Path to a .txt file with keywords to ignore (one per line)                          |
 
 ## 🛡️ Detection Capabilities
 
 CollapseScanner analyzes Java class files to find:
 
--   **Network indicators**:
+- **Network indicators**:
+    - IP addresses (IPv4 and IPv6)
+    - URLs and domains
+    - Network-related strings
 
-    -   IP addresses (IPv4 and IPv6)
-    -   URLs and domains
-    -   Network-related strings
+- **Cryptographic indicators**:
+    - Encryption algorithms (AES, DES, RSA)
+    - Hash functions (MD5, SHA)
+    - Key management and password handling
 
--   **Cryptographic indicators**:
-
-    -   Encryption algorithms (AES, DES, RSA)
-    -   Hash functions (MD5, SHA)
-    -   Key management and password handling
-
--   **Obfuscation indicators**:
-    -   Suspicious character sequences
-    -   Unicode characters in identifiers
-    -   Custom JVM bytecode detection (unusual magic bytes)
+- **Obfuscation indicators**:
+    - Suspicious character sequences
+    - Unicode characters in identifiers
+    - Custom JVM bytecode detection (unusual magic bytes)
 
 ## 🛠️ Tools
 

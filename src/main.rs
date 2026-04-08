@@ -7,10 +7,6 @@ mod scanner;
 mod types;
 mod utils;
 
-#[cfg(feature = "gui")]
-mod gui;
-
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 use {
     crate::scanner::scan::CollapseScanner,
     crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions},
@@ -23,7 +19,6 @@ use {
     walkdir::WalkDir,
 };
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 #[derive(Parser)]
 #[clap(
     name = "CollapseScanner",
@@ -41,21 +36,6 @@ struct Args {
 
     #[clap(short, long, action = clap::ArgAction::SetTrue)]
     verbose: bool,
-
-    #[clap(long, value_parser)]
-    buffer_size_mb: Option<usize>,
-
-    #[clap(long, value_parser)]
-    result_cache_size: Option<usize>,
-
-    #[clap(long, value_parser)]
-    safe_string_cache_capacity: Option<usize>,
-
-    #[clap(long, action = clap::ArgAction::SetTrue)]
-    parallel_scanning: bool,
-
-    #[clap(long, action = clap::ArgAction::SetTrue)]
-    no_parallel_scanning: bool,
 
     #[clap(long)]
     strings: bool,
@@ -83,15 +63,8 @@ struct Args {
 
     #[clap(long, value_parser, default_value_t = 0)]
     threads: usize,
-
-    #[clap(long, value_parser)]
-    available_memory_mb: Option<usize>,
-
-    #[clap(long, value_parser)]
-    max_file_size: Option<usize>,
 }
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn print_banner() {
     println!(
         "\n{}",
@@ -123,7 +96,6 @@ fn print_banner() {
     );
 }
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn create_scanner_options(args: &Args) -> ScannerOptions {
     ScannerOptions {
         mode: args.mode,
@@ -135,57 +107,25 @@ fn create_scanner_options(args: &Args) -> ScannerOptions {
     }
 }
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-fn apply_env_overrides(args: &Args) {
-    if let Some(mb) = args.buffer_size_mb {
-        std::env::set_var("COLLAPSE_BUFFER_SIZE_MB", mb.to_string());
-    }
+fn apply_env_overrides(_args: &Args) {}
 
-    if let Some(size) = args.result_cache_size {
-        std::env::set_var("COLLAPSE_RESULT_CACHE_SIZE", size.to_string());
-    }
-
-    if let Some(cap) = args.safe_string_cache_capacity {
-        std::env::set_var("COLLAPSE_STRING_CACHE_CAPACITY", cap.to_string());
-    }
-
-    if args.parallel_scanning {
-        std::env::set_var("COLLAPSE_PARALLEL_SCANNING", "1");
-    }
-
-    if args.no_parallel_scanning {
-        std::env::set_var("COLLAPSE_PARALLEL_SCANNING", "0");
-    }
-
-    if let Some(mb) = args.available_memory_mb {
-        std::env::set_var("COLLAPSE_AVAILABLE_MEMORY_OVERRIDE_MB", mb.to_string());
-    }
-}
-
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = rayon::ThreadPoolBuilder::new().stack_size(64 * 1024 * 1024);
 
     if args.threads > 0 {
         if args.threads > 1024 {
             eprintln!(
-                "{} Warning: Thread count {} is very high. Consider using fewer threads (recommended: 1-64).",
-                "⚠️".yellow(),
+                "(!) Warning: Thread count {} is very high. Consider using fewer threads (recommended: 1-64).",
                 args.threads
             );
         }
         builder = builder.num_threads(args.threads);
         if args.verbose {
-            println!(
-                "{} Using {} threads for processing.",
-                "🧵".blue(),
-                args.threads
-            );
+            println!("[*] Using {} threads for processing.", args.threads);
         }
     } else if args.verbose {
         println!(
-            "{} Using automatic number of threads (Rayon default) with increased stack size.",
-            "🧵".blue()
+            "[*] Using automatic number of threads (Rayon default) with increased stack size."
         );
     }
 
@@ -193,40 +133,23 @@ fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn validate_and_prepare_path(args: &Args) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let path_arg = args.path.clone().unwrap_or_else(|| ".".to_string());
     let path = PathBuf::from(&path_arg);
     if !path.exists() {
-        eprintln!(
-            "{} Error: Target path does not exist: {}",
-            "❌".red().bold(),
-            path.display()
-        );
-        eprintln!(
-            "{} Hint: Check the path spelling and ensure the file/directory exists.",
-            "💡".cyan()
-        );
+        eprintln!("[X] Error: Target path does not exist: {}", path.display());
+        eprintln!("[i] Hint: Check the path spelling and ensure the file/directory exists.");
         std::process::exit(1);
     }
 
     Ok(path)
 }
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn print_scan_configuration(path: &Path, args: &Args, scanner: &CollapseScanner) {
-    println!(
-        "\n{} {}",
-        "🎯".green().bold(),
-        "Target:".bright_white().bold()
-    );
+    println!("\n[+] {}", "Target:".bright_white().bold());
     println!("   {}", path.display().to_string().bright_white());
 
-    println!(
-        "\n{} {}",
-        "🔧".yellow().bold(),
-        "Detection Mode:".bright_white().bold()
-    );
+    println!("\n[*] {}", "Detection Mode:".bright_white().bold());
     println!(
         "   {} ({})",
         format!("{:?}", args.mode).bright_white(),
@@ -242,50 +165,32 @@ fn print_scan_configuration(path: &Path, args: &Args, scanner: &CollapseScanner)
     print_optional_configurations(scanner, args);
 }
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn print_optional_configurations(scanner: &CollapseScanner, args: &Args) {
     if !scanner.options.exclude_patterns.is_empty() {
-        println!(
-            "\n{} {}",
-            "🚫".yellow().bold(),
-            "Exclude Patterns:".bright_white().bold()
-        );
+        println!("\n[-] {}", "Exclude Patterns:".bright_white().bold());
         for pattern in &scanner.options.exclude_patterns {
             println!("   • {}", pattern.dimmed());
         }
     }
 
     if !scanner.options.find_patterns.is_empty() {
-        println!(
-            "\n{} {}",
-            "🔍".yellow().bold(),
-            "Find Patterns:".bright_white().bold()
-        );
+        println!("\n[?] {}", "Find Patterns:".bright_white().bold());
         for pattern in &scanner.options.find_patterns {
             println!("   • {}", pattern.dimmed());
         }
     }
 
     if let Some(p) = &scanner.options.ignore_keywords_file {
-        println!(
-            "\n{} {}",
-            "📄".yellow().bold(),
-            "Ignore Keywords File:".bright_white().bold()
-        );
+        println!("\n[#] {}", "Ignore Keywords File:".bright_white().bold());
         println!("   {}", p.display().to_string().dimmed());
     }
 
     if args.verbose {
-        println!(
-            "\n{} {}",
-            "🔊".yellow().bold(),
-            "Verbose Mode:".bright_white().bold()
-        );
+        println!("\n[v] {}", "Verbose Mode:".bright_white().bold());
         println!("   {}", "Enabled".bright_white());
     }
 }
 
-#[cfg(all(feature = "cli", not(feature = "gui")))]
 fn calculate_scan_score(
     sorted_significant_results: &[&ScanResult],
 ) -> (u8, &'static str, &'static str) {
@@ -343,19 +248,7 @@ fn calculate_scan_score(
     (avg_danger_score, score_color, risk_level)
 }
 
-#[cfg(feature = "gui")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    gui::app::run_gui()?;
-    Ok(())
-}
-
-#[cfg(all(not(feature = "gui"), feature = "cli"))]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    run_cli()
-}
-
-#[cfg(all(feature = "cli", not(feature = "gui")))]
-fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     apply_env_overrides(&args);
     let options = create_scanner_options(&args);
@@ -371,11 +264,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
     if !args.json {
         print_scan_configuration(&path, &args, &scanner);
-        println!(
-            "\n{} {}",
-            "🚀".bright_green().bold(),
-            "Initializing scan...".bright_green()
-        );
+        println!("\n>>> {}", "Initializing scan...".bright_green());
     }
 
     let scan_start_time = std::time::Instant::now();
@@ -451,24 +340,18 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
                 if !potentially_scannable {
                     println!(
-                        "\n{} {}",
-                        "🤷".yellow().bold(),
+                        "\n[-] {}",
                         "No scannable files (.jar, .class) found in the target path.".yellow()
                     );
                 } else if !scanner.options.exclude_patterns.is_empty()
                     || !scanner.options.find_patterns.is_empty()
                 {
                     println!(
-                        "\n{} {}",
-                        "✅".green().bold(),
+                        "\n[+] {}",
                         "No findings in files matching filter criteria.".green()
                     );
                 } else {
-                    println!(
-                        "\n{} {}",
-                        "✅".green().bold(),
-                        "No findings matching current criteria.".green()
-                    );
+                    println!("\n[+] {}", "No findings matching current criteria.".green());
                 }
             } else {
                 let mut findings_by_type: HashMap<FindingType, usize> = HashMap::new();
@@ -517,8 +400,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                     };
 
                     println!(
-                        "\n{} {}: {} | {}: {} | {}: {} ({}/10)",
-                        "📊".bright_white().bold(),
+                        "\n[#] {}: {} | {}: {} | {}: {} ({}/10)",
                         "Total Findings".bright_white(),
                         total_findings.to_string().bright_white().bold(),
                         "Files with Findings".bright_white(),
@@ -529,8 +411,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                     );
 
                     println!(
-                        "{} {}: {:.2}s | {}: {} | {}: {:.1} files/sec",
-                        "⏱️".bright_white().bold(),
+                        "[*] {}: {:.2}s | {}: {} | {}: {:.1} files/sec",
                         "Scan Time".bright_white(),
                         scan_duration.as_secs_f64(),
                         "Total Files Scanned".bright_white(),
@@ -539,11 +420,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                         scan_rate
                     );
 
-                    println!(
-                        "\n{} {}",
-                        "🔍".yellow().bold(),
-                        "Findings Breakdown:".yellow().bold()
-                    );
+                    println!("\n[?] {}", "Findings Breakdown:".yellow().bold());
 
                     let mut all_findings: HashMap<FindingType, std::collections::HashSet<String>> =
                         HashMap::new();
@@ -558,7 +435,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     for (finding_type, values) in &all_findings {
-                        let (icon, color) = finding_type.with_emoji();
+                        let (icon, color) = finding_type.with_symbol();
 
                         println!(
                             "\n  {} {} ({})",
@@ -584,14 +461,12 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                     };
 
                     println!(
-                        "\n{} {}",
-                        "✅".green().bold(),
+                        "\n[+] {}",
                         "No specific findings detected based on current criteria.".green()
                     );
 
                     println!(
-                        "{} {}: {:.2}s | {}: {:.1} files/sec",
-                        "⏱️".bright_white().bold(),
+                        "[*] {}: {:.2}s | {}: {:.1} files/sec",
                         "Scan Time".bright_white(),
                         scan_duration.as_secs_f64(),
                         "Processing Rate".bright_white(),
@@ -602,11 +477,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
             let found_custom_jvm = *scanner.found_custom_jvm_indicator.lock().unwrap();
             if found_custom_jvm && !args.json {
-                println!(
-                    "\n{} {}",
-                    "👻".cyan().bold(),
-                    "Custom JVM Warning:".yellow().bold()
-                );
+                println!("\n(!) {}", "Custom JVM Warning:".yellow().bold());
                 println!(
                     "   {}",
                     "Files with unusual magic bytes detected. These may require custom JVM or ClassLoader.".yellow()
@@ -621,13 +492,13 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string_pretty(&error_json)?);
                 std::process::exit(1);
             }
-            eprintln!("\n{} {}", "❌ Error during scan:".red().bold(), e);
+            eprintln!("\n[X] {}", "Error during scan:".red().bold());
+            eprintln!("   {}", e);
             if options.verbose {
                 eprintln!(
-                    "{} Debug info: This error occurred while processing the target path.",
-                    "🔍".dimmed()
+                    "   [?] Debug info: This error occurred while processing the target path."
                 );
-                eprintln!("{} Check file permissions, disk space, and ensure JAR/class files are not corrupted.", "💡".cyan());
+                eprintln!("   [i] Check file permissions, disk space, and ensure JAR/class files are not corrupted.");
             }
             std::process::exit(1);
         }

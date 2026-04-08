@@ -20,6 +20,7 @@ pub struct SystemConfig {
     pub safe_string_cache_capacity: usize,
     pub parallel_scanning: bool,
     pub available_memory: u64,
+    pub max_file_size: usize,
 }
 
 impl SystemConfig {
@@ -27,14 +28,15 @@ impl SystemConfig {
         let mut sys = System::new_all();
         sys.refresh_all();
 
+        let total_memory = sys.total_memory() * 1024;
         let available_memory = if let Ok(val) = env::var("COLLAPSE_AVAILABLE_MEMORY_OVERRIDE_MB") {
             if let Ok(mb) = val.parse::<u64>() {
                 mb * 1024 * 1024
             } else {
-                sys.total_memory() * 1024
+                total_memory
             }
         } else {
-            sys.total_memory() * 1024
+            total_memory
         };
 
         let buffer_size_mb_override = env::var("COLLAPSE_BUFFER_SIZE_MB")
@@ -86,32 +88,44 @@ impl SystemConfig {
             Err(_) => available_memory >= LOW_MEMORY_THRESHOLD,
         };
 
+        let max_file_size = match available_memory {
+            mem if mem < LOW_MEMORY_THRESHOLD => 100,
+            mem if mem < MEDIUM_MEMORY_THRESHOLD => 250,
+            mem if mem < HIGH_MEMORY_THRESHOLD => 500,
+            _ => 1000,
+        };
+
         SystemConfig {
             result_cache_size,
             buffer_size,
             safe_string_cache_capacity,
             parallel_scanning,
             available_memory,
+            max_file_size,
         }
     }
 
     pub fn log_config(&self) {
-        println!("🔧 System Configuration:");
+        println!("[*] System Configuration:");
         println!(
-            "   📊 Available Memory: {:.2} GB",
+            "   [m] Available Memory: {:.2} GB",
             self.available_memory as f64 / (1024.0 * 1024.0 * 1024.0)
         );
         println!(
-            "   🧰 Result Cache Size: {} entries",
+            "   [c] Result Cache Size: {} entries",
             self.result_cache_size
         );
-        println!("   📦 Buffer Size: {} MB", self.buffer_size / (1024 * 1024));
         println!(
-            "   💾 String Cache Capacity: {} entries",
-            self.safe_string_cache_capacity
+            "   [b] Buffer Size: {} MB",
+            self.buffer_size / (1024 * 1024)
         );
         println!(
-            "   🔍 Parallel Scanning: {}",
+            "   [s] String Cache Capacity: {} entries",
+            self.safe_string_cache_capacity
+        );
+        println!("   [f] Max File Size: {} MB", self.max_file_size);
+        println!(
+            "   [p] Parallel Scanning: {}",
             if self.parallel_scanning {
                 "Enabled"
             } else {

@@ -30,11 +30,7 @@ impl CollapseScanner {
 
         if let Some(ref path) = options.ignore_keywords_file {
             if options.verbose {
-                println!(
-                    "{} Loading keywords ignore list from: {}",
-                    colored::Colorize::yellow("📄"),
-                    path.display()
-                );
+                println!("[#] Loading keywords ignore list from: {}", path.display());
             }
             match Self::load_ignore_list_from_file(path) {
                 Ok(ignored) => {
@@ -42,8 +38,7 @@ impl CollapseScanner {
                 }
                 Err(e) => {
                     eprintln!(
-                        "{} Warning: Could not load keywords ignore list from {}: {}",
-                        colored::Colorize::yellow("⚠️"),
+                        "(!) Warning: Could not load keywords ignore list from {}: {}",
                         path.display(),
                         e
                     );

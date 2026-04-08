@@ -36,28 +36,20 @@ fn resolve_utf8<'a>(
     pool: &'a [ConstantPoolEntry],
     index: u16,
     path: &str,
-    context: &str,
+    _context: &str,
 ) -> Result<&'a str, ScanError> {
     if index == 0 || (index as usize) > pool.len() {
         return Err(ScanError::ClassParseError {
             path: path.to_string(),
-            msg: format!(
-                "Invalid CP index {} (0-based) for UTF8 resolve ('{}'). Pool size: {}.",
-                index,
-                context,
-                pool.len()
-            ),
+            msg: "Invalid CP index".to_string(),
         });
     }
 
     match &pool[index as usize - 1] {
         ConstantPoolEntry::Utf8(s) => Ok(s),
-        other => Err(ScanError::ClassParseError {
+        _ => Err(ScanError::ClassParseError {
             path: path.to_string(),
-            msg: format!(
-                "Expected UTF8 at CP index {} ('{}'), found {:?}",
-                index, context, other
-            ),
+            msg: "Expected UTF8".to_string(),
         }),
     }
 }
@@ -94,7 +86,7 @@ fn resolve_class_name(
     match &pool[index as usize - 1] {
         ConstantPoolEntry::Class(name_index) => {
             let class_name_context = format!("name for Class at {} ('{}')", index, context);
-            Ok(resolve_utf8(pool, *name_index, path, &class_name_context)?.to_owned())
+            Ok(resolve_utf8(pool, *name_index, path, &class_name_context)?.to_string())
         }
         other => Err(ScanError::ClassParseError {
             path: path.to_string(),
@@ -141,29 +133,19 @@ where
         let descriptor_context = format!("{} {} descriptor", member_kind, index);
 
         let name = resolve_utf8(pool, name_index, file_path_str, &name_context)
-            .map(str::to_owned)
+            .map(str::to_string)
             .unwrap_or_else(|e| {
                 if verbose {
-                    eprintln!(
-                        "{} {} name resolution error: {}",
-                        "⚠️".yellow(),
-                        member_kind,
-                        e
-                    );
+                    eprintln!("(!) {} name resolution error: {}", member_kind, e);
                 }
                 format!("<{}_{}>", invalid_name_prefix, name_index)
             });
 
         let descriptor = resolve_utf8(pool, descriptor_index, file_path_str, &descriptor_context)
-            .map(str::to_owned)
+            .map(str::to_string)
             .unwrap_or_else(|e| {
                 if verbose {
-                    eprintln!(
-                        "{} {} descriptor resolution error: {}",
-                        "⚠️".yellow(),
-                        member_kind,
-                        e
-                    );
+                    eprintln!("(!) {} descriptor resolution error: {}", member_kind, e);
                 }
                 format!("<INVALID_DESCRIPTOR_INDEX_{}>", descriptor_index)
             });
@@ -222,7 +204,7 @@ fn parse_constant_pool(
                 let utf8_bytes = &data[current_pos..end_pos];
                 let (cow, _encoding_used, _) = UTF_8.decode(utf8_bytes);
 
-                constant_pool.push(ConstantPoolEntry::Utf8(cow.into_owned()));
+                constant_pool.push(ConstantPoolEntry::Utf8(cow.into()));
                 cursor.seek(SeekFrom::Current(length as i64))?;
                 1
             }
@@ -338,7 +320,7 @@ fn parse_constant_pool(
     if constant_pool.len() != capacity {
         eprintln!(
             "{} Warning: Constant pool size mismatch for '{}'. Parsed {} entries, expected capacity {}. File might be corrupt or parser logic error.",
-            "⚠️".yellow(),
+            "!".yellow(),
             file_path_str,
             constant_pool.len(),
             capacity
@@ -484,7 +466,7 @@ pub fn parse_class_structure(
     let mut string_set: HashSet<String> = constant_pool
         .iter()
         .filter_map(|entry| match entry {
-            ConstantPoolEntry::Utf8(s) => Some(s.clone()),
+            ConstantPoolEntry::Utf8(s) => Some(s.to_string()),
             _ => None,
         })
         .collect();
@@ -500,20 +482,17 @@ pub fn parse_class_structure(
             "String constant data",
         ) {
             Ok(s) => {
-                string_set.insert(s.to_owned());
+                string_set.insert(s.to_string());
             }
             Err(e) => {
                 if verbose {
-                    eprintln!(
-                        "{} String constant data resolution error: {}",
-                        "⚠️".yellow(),
-                        e
-                    );
+                    eprintln!("(!) String constant data resolution error: {}", e);
                 }
             }
         }
     }
-    let strings: Vec<String> = string_set.into_iter().collect();
+    let mut strings: Vec<String> = string_set.into_iter().collect();
+    strings.sort_unstable();
 
     Ok(ClassDetails {
         class_name,

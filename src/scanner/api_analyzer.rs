@@ -25,8 +25,10 @@ pub const DYNAMIC_LOADING_MARKERS: &[&str] = &[
     "Lookup.defineClass",
 ];
 
-pub const SCRIPT_ENGINE_MARKERS: &[&str] =
-    &["javax/script/ScriptEngineManager", "javax/script/ScriptEngine"];
+pub const SCRIPT_ENGINE_MARKERS: &[&str] = &[
+    "javax/script/ScriptEngineManager",
+    "javax/script/ScriptEngine",
+];
 
 pub const JAVA_AGENT_MARKERS: &[&str] = &[
     "java/lang/instrument/Instrumentation",
@@ -40,7 +42,11 @@ pub const ATTACH_API_MARKERS: &[&str] = &[
     "sun/tools/attach/HotSpotVirtualMachine",
 ];
 
-pub const NATIVE_BRIDGE_MARKERS: &[&str] = &["com/sun/jna/Native", "com/sun/jna/Library", "sun/misc/Unsafe"];
+pub const NATIVE_BRIDGE_MARKERS: &[&str] = &[
+    "com/sun/jna/Native",
+    "com/sun/jna/Library",
+    "sun/misc/Unsafe",
+];
 
 pub struct ApiAnalyzer;
 
@@ -48,11 +54,21 @@ impl ApiAnalyzer {
     pub fn analyze(details: &ClassDetails, findings: &mut Vec<(FindingType, String)>) {
         let string_set: HashSet<&str> = details.strings.iter().map(String::as_str).collect();
 
-        if PROCESS_EXECUTION_MARKERS.iter().any(|m| string_set.contains(m)) {
+        if PROCESS_EXECUTION_MARKERS
+            .iter()
+            .any(|m| string_set.contains(m))
+        {
             let cmd = Self::guess_command(&details.strings);
             findings.push((
                 FindingType::SuspiciousApi,
-                format!("Process execution API usage{}", if cmd.is_empty() { "".to_string() } else { format!(": Likely running \"{}\"", cmd) }),
+                format!(
+                    "Process execution API usage{}",
+                    if cmd.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(": Likely running \"{}\"", cmd)
+                    }
+                ),
             ));
         }
 
@@ -60,15 +76,47 @@ impl ApiAnalyzer {
             let target = Self::guess_reflected_target(details);
             findings.push((
                 FindingType::SuspiciousApi,
-                format!("Reflection-based access{}", if target.is_empty() { "".to_string() } else { format!(": Likely targeting \"{}\"", target) }),
+                format!(
+                    "Reflection-based access{}",
+                    if target.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(": Likely targeting \"{}\"", target)
+                    }
+                ),
             ));
         }
 
-        Self::check_marker(&string_set, DYNAMIC_LOADING_MARKERS, "Dynamic class loading or definition", findings);
-        Self::check_marker(&string_set, SCRIPT_ENGINE_MARKERS, "Script engine execution", findings);
-        Self::check_marker(&string_set, JAVA_AGENT_MARKERS, "Java agent instrumentation", findings);
-        Self::check_marker(&string_set, ATTACH_API_MARKERS, "JVM attach API usage", findings);
-        Self::check_marker(&string_set, NATIVE_BRIDGE_MARKERS, "Native bridge or Unsafe API usage", findings);
+        Self::check_marker(
+            &string_set,
+            DYNAMIC_LOADING_MARKERS,
+            "Dynamic class loading or definition",
+            findings,
+        );
+        Self::check_marker(
+            &string_set,
+            SCRIPT_ENGINE_MARKERS,
+            "Script engine execution",
+            findings,
+        );
+        Self::check_marker(
+            &string_set,
+            JAVA_AGENT_MARKERS,
+            "Java agent instrumentation",
+            findings,
+        );
+        Self::check_marker(
+            &string_set,
+            ATTACH_API_MARKERS,
+            "JVM attach API usage",
+            findings,
+        );
+        Self::check_marker(
+            &string_set,
+            NATIVE_BRIDGE_MARKERS,
+            "Native bridge or Unsafe API usage",
+            findings,
+        );
     }
 
     fn check_marker(
@@ -85,7 +133,13 @@ impl ApiAnalyzer {
     fn guess_command(strings: &[String]) -> String {
         for s in strings {
             let lower = s.to_lowercase();
-            if lower.contains("cmd.exe") || lower.contains("/bin/sh") || lower.contains("/bin/bash") || lower.contains("powershell") || lower.contains("curl ") || lower.contains("wget ") {
+            if lower.contains("cmd.exe")
+                || lower.contains("/bin/sh")
+                || lower.contains("/bin/bash")
+                || lower.contains("powershell")
+                || lower.contains("curl ")
+                || lower.contains("wget ")
+            {
                 return truncate_string(s, 60);
             }
         }
@@ -99,9 +153,9 @@ impl ApiAnalyzer {
             }
         }
         for field in &details.fields {
-             if field.name.len() > 5 && !field.name.contains('/') {
-                 return field.name.clone();
-             }
+            if field.name.len() > 5 && !field.name.contains('/') {
+                return field.name.clone();
+            }
         }
         "".to_string()
     }

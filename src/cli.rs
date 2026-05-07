@@ -1,28 +1,43 @@
 use crate::output::{print_detailed_file_report, print_finding_statistics, print_severity_matrix};
 use crate::types::ScanResult;
 use colored::Colorize;
-use std::io::{self, Write};
 use std::fs::File;
+use std::io::{self, Write};
 
 pub fn run_interactive_mode(results: &[ScanResult]) {
-    let mut significant_results: Vec<&ScanResult> = results
-        .iter()
-        .filter(|r| !r.matches.is_empty())
-        .collect();
+    let mut significant_results: Vec<&ScanResult> =
+        results.iter().filter(|r| !r.matches.is_empty()).collect();
 
-    println!("\n{}", "╔══════════════════════════════════════════════════════════════════════════════╗".bright_cyan());
-    println!("║ {:^76} ║", "INTERACTIVE EXPLORER MODE".bold());
-    println!("{}", "╚══════════════════════════════════════════════════════════════════════════════╝".bright_cyan());
+    println!(
+        "\n{}",
+        "╔══════════════════════════════════════════════════════════════════════════════╗"
+            .bright_cyan()
+    );
+    println!(
+        "{}",
+        format!("║ {:^76} ║", "INTERACTIVE EXPLORER MODE".bold())
+            .bright_cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "╚══════════════════════════════════════════════════════════════════════════════╝"
+            .bright_cyan()
+    );
     println!("Type 'help' for a list of commands.\n");
 
     loop {
-        print!("{} ", "collapse>".bright_green().bold());
+        print!("{} ", "collapse ~>".bright_green().bold());
         io::stdout().flush().unwrap();
 
         let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() { break; }
+        if io::stdin().read_line(&mut input).is_err() {
+            break;
+        }
         let input = input.trim();
-        if input.is_empty() { continue; }
+        if input.is_empty() {
+            continue;
+        }
 
         let parts: Vec<&str> = input.split_whitespace().collect();
         match parts[0].to_lowercase().as_str() {
@@ -51,12 +66,16 @@ pub fn run_interactive_mode(results: &[ScanResult]) {
                 if let Some(idx) = parts.get(1).and_then(|s| s.parse::<usize>().ok()) {
                     if idx > 0 && idx <= significant_results.len() {
                         print_detailed_file_report(&[significant_results[idx - 1]]);
-                    } else { println!("Error: Index out of range"); }
+                    } else {
+                        println!("Error: Index out of range");
+                    }
                 }
             }
             "sort" => {
                 match parts.get(1).copied().unwrap_or("risk") {
-                    "risk" => significant_results.sort_by_key(|r| std::cmp::Reverse(r.danger_score)),
+                    "risk" => {
+                        significant_results.sort_by_key(|r| std::cmp::Reverse(r.danger_score))
+                    }
                     "path" => significant_results.sort_by_key(|r| r.file_path.clone()),
                     _ => println!("Usage: sort <risk|path>"),
                 }
@@ -67,9 +86,15 @@ pub fn run_interactive_mode(results: &[ScanResult]) {
                     if let Ok(file) = File::create(path) {
                         if serde_json::to_writer_pretty(file, &significant_results).is_ok() {
                             println!("Exported to {}", path);
-                        } else { println!("Error: Export failed"); }
-                    } else { println!("Error: Cannot create file"); }
-                } else { println!("Usage: export <file.json>"); }
+                        } else {
+                            println!("Error: Export failed");
+                        }
+                    } else {
+                        println!("Error: Cannot create file");
+                    }
+                } else {
+                    println!("Usage: export <file.json>");
+                }
             }
             "clear" => print!("{}[2J{}[1;1H", 27 as char, 27 as char),
             "exit" | "quit" | "q" => break,

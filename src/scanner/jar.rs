@@ -23,6 +23,10 @@ const EXECUTABLE_RESOURCE_EXTENSIONS: &[&str] = &["exe", "scr", "com", "msi"];
 const NATIVE_LIBRARY_EXTENSIONS: &[&str] = &["dll", "so", "dylib", "jnilib"];
 
 impl CollapseScanner {
+    fn get_archive_entry_name(entry_name: &str) -> String {
+        entry_name.replace('\\', "/")
+    }
+
     pub(crate) fn scan_jar_file(&self, jar_path: &Path) -> Result<Vec<ScanResult>, ScanError> {
         let start_time = Instant::now();
         let file = File::open(jar_path)?;
@@ -71,8 +75,10 @@ impl CollapseScanner {
                 };
 
                 let original_entry_name = match archive_file.enclosed_name() {
-                    Some(p) => p.to_string_lossy().replace('\\', "/"),
-                    None => String::from_utf8_lossy(archive_file.name_raw()).replace('\\', "/"),
+                    Some(p) => Self::get_archive_entry_name(&p.to_string_lossy()),
+                    None => Self::get_archive_entry_name(&String::from_utf8_lossy(
+                        archive_file.name_raw(),
+                    )),
                 };
 
                 if archive_file.is_dir() || !self.should_scan(&original_entry_name) {
@@ -82,10 +88,9 @@ impl CollapseScanner {
 
                 let file_size = archive_file.size() as usize;
                 if file_size > max_entry_size {
-                    if let Some(result) = self.create_oversized_entry_result(
-                        &original_entry_name,
-                        archive_file.size(),
-                    ) {
+                    if let Some(result) = self
+                        .create_oversized_entry_result(&original_entry_name, archive_file.size())
+                    {
                         results_arc.lock().unwrap().push(result);
                     } else if self.options.verbose {
                         eprintln!(
@@ -262,9 +267,7 @@ impl CollapseScanner {
                     if self.options.verbose {
                         eprintln!(
                             "(!) Error accessing nested entry {} in {}: {}",
-                            index,
-                            container_path,
-                            error
+                            index, container_path, error
                         );
                     }
                     continue;
@@ -272,8 +275,10 @@ impl CollapseScanner {
             };
 
             let relative_name = match archive_file.enclosed_name() {
-                Some(path) => path.to_string_lossy().replace('\\', "/"),
-                None => String::from_utf8_lossy(archive_file.name_raw()).replace('\\', "/"),
+                Some(path) => Self::get_archive_entry_name(&path.to_string_lossy()),
+                None => {
+                    Self::get_archive_entry_name(&String::from_utf8_lossy(archive_file.name_raw()))
+                }
             };
 
             if archive_file.is_dir() || !self.should_scan(&relative_name) {
@@ -283,7 +288,9 @@ impl CollapseScanner {
             let display_path = format!("{}!/{relative_name}", container_path);
             let file_size = archive_file.size() as usize;
             if file_size > max_entry_size {
-                if let Some(result) = self.create_oversized_entry_result(&display_path, archive_file.size()) {
+                if let Some(result) =
+                    self.create_oversized_entry_result(&display_path, archive_file.size())
+                {
                     results.push(result);
                 }
                 continue;
@@ -295,9 +302,7 @@ impl CollapseScanner {
                 if self.options.verbose {
                     eprintln!(
                         "(!) Error reading nested entry {} from {}: {}",
-                        relative_name,
-                        container_path,
-                        error
+                        relative_name, container_path, error
                     );
                 }
                 continue;
@@ -360,8 +365,7 @@ impl CollapseScanner {
             FindingType::SuspiciousArchiveEntry,
             format!(
                 "Oversized entry was not fully inspected ({} bytes exceeds {} MB limit)",
-                size,
-                SYSTEM_CONFIG.max_file_size
+                size, SYSTEM_CONFIG.max_file_size
             ),
         )];
 
@@ -433,7 +437,10 @@ impl CollapseScanner {
 
             findings.push((
                 finding_type,
-                format!("Embedded binary payload header ({binary_kind}) in {}", resource_name),
+                format!(
+                    "Embedded binary payload header ({binary_kind}) in {}",
+                    resource_name
+                ),
             ));
         }
 
@@ -503,13 +510,18 @@ impl CollapseScanner {
         Path::new(resource_name)
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| extensions.iter().any(|candidate| ext.eq_ignore_ascii_case(candidate)))
+            .is_some_and(|ext| {
+                extensions
+                    .iter()
+                    .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+            })
     }
 
     fn has_zip_magic(buffer: &[u8]) -> bool {
-        buffer.starts_with(b"PK\x03\x04")
-            || buffer.starts_with(b"PK\x05\x06")
-            || buffer.starts_with(b"PK\x07\x08")
+        buffer.len() >= 4
+            && buffer[0] == b'P'
+            && buffer[1] == b'K'
+            && matches!(buffer[2], b'\x03' | b'\x05' | b'\x07')
     }
 
     fn detect_binary_magic(buffer: &[u8]) -> Option<&'static str> {
@@ -536,7 +548,8 @@ impl CollapseScanner {
         let is_class_name_candidate =
             original_path_str.ends_with(".class") || original_path_str.ends_with(".class/");
 
-        let is_standard_class_file = is_class_name_candidate && data.starts_with(b"\xCA\xFE\xBA\xBE");
+        let is_standard_class_file =
+            is_class_name_candidate && data.starts_with(b"\xCA\xFE\xBA\xBE");
 
         let is_dead_class_candidate = is_class_name_candidate && !is_standard_class_file;
 

@@ -1,13 +1,17 @@
+mod cli;
 mod config;
 mod detection;
 mod errors;
 mod filters;
+mod output;
 mod parser;
 mod scanner;
 mod types;
 mod utils;
 
 use {
+    crate::cli::run_interactive_mode,
+    crate::output::{print_detailed_file_report, print_finding_statistics, print_severity_matrix},
     crate::scanner::scan::CollapseScanner,
     crate::types::{DetectionMode, FindingType, ScanResult, ScannerOptions},
     clap::Parser,
@@ -16,6 +20,7 @@ use {
     std::collections::HashMap,
     std::io::{self},
     std::path::{Path, PathBuf},
+    std::time::Duration,
     walkdir::WalkDir,
 };
 
@@ -26,9 +31,9 @@ use {
     version,
     about = "Advanced JAR/class file analysis and reverse engineering tool",
     long_about = "CollapseScanner is a powerful static analysis tool designed for security researchers, \
-                  malware analysts, and developers to analyze Java JAR files and class files. It detects \
-                  suspicious patterns, network communications and obfuscation \
-                  techniques that may indicate malicious behavior or security vulnerabilities."
+                   malware analysts, and developers to analyze Java JAR files and class files. It detects \
+                   suspicious patterns, network communications and obfuscation \
+                   techniques that may indicate malicious behavior or security vulnerabilities."
 )]
 struct Args {
     #[clap(value_parser)]
@@ -65,13 +70,13 @@ struct Args {
     threads: usize,
 }
 
+const BANNER_BOX: &str =
+    "╔══════════════════════════════════════════════════════════════════════════════╗";
+const BANNER_BOTTOM: &str =
+    "╚══════════════════════════════════════════════════════════════════════════════╝";
+
 fn print_banner() {
-    println!(
-        "\n{}",
-        "╔══════════════════════════════════════════════════════════════════════════════╗"
-            .bright_blue()
-            .bold()
-    );
+    println!("\n{}", BANNER_BOX.bright_blue().bold());
     println!(
         "{}",
         concat!(
@@ -88,12 +93,7 @@ fn print_banner() {
             .bright_blue()
             .bold()
     );
-    println!(
-        "{}",
-        "╚══════════════════════════════════════════════════════════════════════════════╝"
-            .bright_blue()
-            .bold()
-    );
+    println!("{}", BANNER_BOTTOM.bright_blue().bold());
 }
 
 fn create_scanner_options(args: &Args) -> ScannerOptions {
@@ -106,8 +106,6 @@ fn create_scanner_options(args: &Args) -> ScannerOptions {
         progress: None,
     }
 }
-
-fn apply_env_overrides(_args: &Args) {}
 
 fn configure_threading(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = rayon::ThreadPoolBuilder::new().stack_size(64 * 1024 * 1024);
@@ -141,7 +139,6 @@ fn validate_and_prepare_path(args: &Args) -> Result<PathBuf, Box<dyn std::error:
         eprintln!("[i] Hint: Check the path spelling and ensure the file/directory exists.");
         std::process::exit(1);
     }
-
     Ok(path)
 }
 
@@ -232,9 +229,7 @@ fn calculate_scan_score(
         5 => "yellow",
         6 => "bright_yellow",
         7 => "magenta",
-        8 => "red",
-        9 => "red",
-        10 => "red",
+        8..=10 => "red",
         _ => "green",
     };
 
@@ -248,9 +243,29 @@ fn calculate_scan_score(
     (avg_danger_score, score_color, risk_level)
 }
 
+fn print_section_header(title: &str) {
+    println!("\n{}", BANNER_BOX.bright_blue().bold());
+    println!(
+        "{}",
+        format!("║{}║", format!(" {:<76} ", title))
+            .bright_blue()
+            .bold()
+    );
+    println!("{}", BANNER_BOTTOM.bright_blue().bold());
+}
+
+fn format_scan_stats(duration: Duration, total_files: usize) -> (f64, f64) {
+    let scan_time = duration.as_secs_f64();
+    let scan_rate = if scan_time > 0.0 {
+        total_files as f64 / scan_time
+    } else {
+        0.0
+    };
+    (scan_time, scan_rate)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    apply_env_overrides(&args);
     let options = create_scanner_options(&args);
 
     if !args.json {
@@ -319,24 +334,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     false
                 };
 
-                println!(
-                    "\n{}",
-                    "╔══════════════════════════════════════════════════════════════════════════════╗"
-                        .bright_blue()
-                        .bold()
-                );
-                println!(
-                    "{}",
-                    "║                              SCAN RESULTS                                    ║"
-                        .bright_blue()
-                        .bold()
-                );
-                println!(
-                    "{}",
-                    "╚══════════════════════════════════════════════════════════════════════════════╝"
-                        .bright_blue()
-                        .bold()
-                );
+                print_section_header("SCAN RESULTS");
 
                 if !potentially_scannable {
                     println!(
@@ -367,37 +365,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                println!(
-                    "\n{}",
-                    "╔══════════════════════════════════════════════════════════════════════════════╗"
-                        .bright_blue()
-                        .bold()
-                );
-                println!(
-                    "{}",
-                    "║                              SCAN SUMMARY                                    ║"
-                        .bright_blue()
-                        .bold()
-                );
-                println!(
-                    "{}",
-                    "╚══════════════════════════════════════════════════════════════════════════════╝"
-                        .bright_blue()
-                        .bold()
-                );
+                print_section_header("SCAN SUMMARY");
 
                 if total_findings > 0 {
                     let files_with_findings = sorted_significant_results.len();
                     let (avg_danger_score, score_color, risk_level) =
                         calculate_scan_score(&sorted_significant_results);
 
-                    let scan_duration = scan_start_time.elapsed();
-                    let total_files_scanned = results.len();
-                    let scan_rate = if scan_duration.as_secs_f64() > 0.0 {
-                        total_files_scanned as f64 / scan_duration.as_secs_f64()
-                    } else {
-                        0.0
-                    };
+                    let (scan_time, scan_rate) =
+                        format_scan_stats(scan_start_time.elapsed(), results.len());
 
                     println!(
                         "\n[#] {}: {} | {}: {} | {}: {} ({}/10)",
@@ -413,9 +389,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!(
                         "[*] {}: {:.2}s | {}: {} | {}: {:.1} files/sec",
                         "Scan Time".bright_white(),
-                        scan_duration.as_secs_f64(),
+                        scan_time,
                         "Total Files Scanned".bright_white(),
-                        total_files_scanned.to_string().bright_white(),
+                        results.len().to_string().bright_white(),
                         "Processing Rate".bright_white(),
                         scan_rate
                     );
@@ -434,31 +410,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    for (finding_type, values) in &all_findings {
+                    let mut sorted_types: Vec<_> = all_findings.keys().collect();
+                    sorted_types.sort_by_key(|ft| std::cmp::Reverse(ft.base_score()));
+
+                    for finding_type in sorted_types {
+                        let values = &all_findings[finding_type];
                         let (icon, color) = finding_type.with_symbol();
+                        let severity = match finding_type.base_score() {
+                            score if score >= 8 => "CRITICAL",
+                            score if score >= 5 => "HIGH",
+                            score if score >= 3 => "MEDIUM",
+                            _ => "LOW",
+                        };
 
                         println!(
-                            "\n  {} {} ({})",
+                            "\n  {} {} [{}] ({})",
                             icon.color(color).bold(),
                             finding_type.to_string().color(color).bold(),
+                            severity.color(color).bold(),
                             values.len().to_string().bright_white()
                         );
 
                         let mut sorted_values: Vec<&String> = values.iter().collect();
                         sorted_values.sort();
 
-                        for value in sorted_values.iter() {
-                            println!("    • {}", value.bright_white());
+                        for (idx, value) in sorted_values.iter().enumerate() {
+                            if idx < 10 {
+                                println!("      [{}] {}", idx + 1, value.bright_white());
+                            } else if idx == 10 {
+                                println!(
+                                    "      ... and {} more",
+                                    (sorted_values.len() - 10).to_string().bright_white()
+                                );
+                                break;
+                            }
                         }
                     }
                 } else {
-                    let scan_duration = scan_start_time.elapsed();
-                    let total_files_scanned = results.len();
-                    let scan_rate = if scan_duration.as_secs_f64() > 0.0 {
-                        total_files_scanned as f64 / scan_duration.as_secs_f64()
-                    } else {
-                        0.0
-                    };
+                    let (scan_time, scan_rate) =
+                        format_scan_stats(scan_start_time.elapsed(), results.len());
 
                     println!(
                         "\n[+] {}",
@@ -468,10 +458,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!(
                         "[*] {}: {:.2}s | {}: {:.1} files/sec",
                         "Scan Time".bright_white(),
-                        scan_duration.as_secs_f64(),
+                        scan_time,
                         "Processing Rate".bright_white(),
                         scan_rate
                     );
+                }
+
+                if !sorted_significant_results.is_empty() && total_findings > 0 {
+                    print_severity_matrix(&sorted_significant_results);
+                    print_finding_statistics(&sorted_significant_results);
+                    print_detailed_file_report(&sorted_significant_results);
+
+                    if !args.json {
+                        run_interactive_mode(&results);
+                    }
                 }
             }
 

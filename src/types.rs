@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-// custom serde helper to (de)serialize Arc<Vec<(FindingType,String)>>
 mod arc_matches_serde {
     use super::FindingType;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -19,8 +18,7 @@ mod arc_matches_serde {
     where
         D: Deserializer<'de>,
     {
-        let vec = Vec::<(FindingType, String)>::deserialize(d)?;
-        Ok(Arc::new(vec))
+        Vec::<(FindingType, String)>::deserialize(d).map(Arc::new)
     }
 }
 
@@ -61,20 +59,21 @@ pub enum FindingType {
 
 impl std::fmt::Display for FindingType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FindingType::IpAddress => write!(f, "IPv4 Address"),
-            FindingType::IpV6Address => write!(f, "IPv6 Address"),
-            FindingType::Url => write!(f, "URL"),
-            FindingType::SuspiciousUrl => write!(f, "Suspicious URL"),
-            FindingType::DiscordWebhook => write!(f, "Discord Webhook"),
-            FindingType::SuspiciousKeyword => write!(f, "Suspicious Keyword"),
-            FindingType::SuspiciousApi => write!(f, "Suspicious Java API"),
-            FindingType::EncodedPayload => write!(f, "Encoded Payload"),
-            FindingType::TamperedClass => write!(f, "Tampered Class"),
-            FindingType::NativeLibrary => write!(f, "Native Library"),
-            FindingType::SuspiciousArchiveEntry => write!(f, "Suspicious Archive Entry"),
-            FindingType::ObfuscationUnicode => write!(f, "Obfuscation (Unicode Name)"),
-        }
+        let label = match self {
+            FindingType::IpAddress => "IPv4 Address",
+            FindingType::IpV6Address => "IPv6 Address",
+            FindingType::Url => "URL",
+            FindingType::SuspiciousUrl => "Suspicious URL",
+            FindingType::DiscordWebhook => "Discord Webhook",
+            FindingType::SuspiciousKeyword => "Suspicious Keyword",
+            FindingType::SuspiciousApi => "Suspicious Java API",
+            FindingType::EncodedPayload => "Encoded Payload",
+            FindingType::TamperedClass => "Tampered Class",
+            FindingType::NativeLibrary => "Native Library",
+            FindingType::SuspiciousArchiveEntry => "Suspicious Archive Entry",
+            FindingType::ObfuscationUnicode => "Obfuscation (Unicode Name)",
+        };
+        f.write_str(label)
     }
 }
 
@@ -94,18 +93,16 @@ impl FindingType {
             FindingType::ObfuscationUnicode => ("◌ ", "magenta"),
         }
     }
-}
 
-impl FindingType {
     pub fn base_score(&self) -> u8 {
         match self {
-            FindingType::IpAddress | FindingType::IpV6Address => 3,
-            FindingType::Url => 2,
+            FindingType::IpAddress | FindingType::IpV6Address => 2,
+            FindingType::Url => 1,
             FindingType::SuspiciousUrl => 5,
             FindingType::DiscordWebhook => 10,
             FindingType::SuspiciousKeyword => 3,
-            FindingType::SuspiciousApi => 4,
-            FindingType::EncodedPayload => 5,
+            FindingType::SuspiciousApi => 3,
+            FindingType::EncodedPayload => 2,
             FindingType::TamperedClass => 6,
             FindingType::NativeLibrary => 4,
             FindingType::SuspiciousArchiveEntry => 4,
@@ -115,17 +112,17 @@ impl FindingType {
 
     pub fn max_contribution(&self) -> u8 {
         match self {
-            FindingType::SuspiciousUrl => 9,
-            FindingType::IpAddress | FindingType::IpV6Address => 6,
-            FindingType::Url => 6,
+            FindingType::IpAddress | FindingType::IpV6Address => 5,
+            FindingType::Url => 4,
+            FindingType::SuspiciousUrl => 8,
+            FindingType::DiscordWebhook => 10,
             FindingType::SuspiciousKeyword => 6,
-            FindingType::SuspiciousApi => 8,
-            FindingType::EncodedPayload => 8,
+            FindingType::SuspiciousApi => 7,
+            FindingType::EncodedPayload => 5,
             FindingType::TamperedClass => 10,
             FindingType::NativeLibrary => 7,
             FindingType::SuspiciousArchiveEntry => 8,
-            FindingType::ObfuscationUnicode => 4,
-            FindingType::DiscordWebhook => 10,
+            FindingType::ObfuscationUnicode => 3,
         }
     }
 }
@@ -173,12 +170,13 @@ pub enum DetectionMode {
 
 impl std::fmt::Display for DetectionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DetectionMode::Network => write!(f, "Network"),
-            DetectionMode::Malicious => write!(f, "Malicious"),
-            DetectionMode::Obfuscation => write!(f, "Obfuscation"),
-            DetectionMode::All => write!(f, "All"),
-        }
+        let label = match self {
+            DetectionMode::Network => "Network",
+            DetectionMode::Malicious => "Malicious",
+            DetectionMode::Obfuscation => "Obfuscation",
+            DetectionMode::All => "All",
+        };
+        f.write_str(label)
     }
 }
 

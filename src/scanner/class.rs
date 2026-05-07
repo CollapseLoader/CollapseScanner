@@ -9,55 +9,15 @@ use crate::filters::{
     URL_REGEX,
 };
 use crate::parser::parse_class_structure;
+use crate::scanner::api_analyzer::ApiAnalyzer;
 use crate::scanner::scan::CollapseScanner;
 use crate::types::{ClassDetails, DetectionMode, FindingType, ResourceInfo, ScanResult};
 use crate::utils::{extract_domain, get_simple_name, truncate_string};
 
-const MIN_BASE64_BLOB_LEN: usize = 96;
-const MIN_HEX_BLOB_LEN: usize = 128;
-const BASE64_ENTROPY_THRESHOLD: f64 = 4.6;
-const HEX_ENTROPY_THRESHOLD: f64 = 3.2;
-
-const PROCESS_EXECUTION_MARKERS: &[&str] = &[
-    "java/lang/Runtime",
-    "Runtime",
-    "getRuntime",
-    "exec",
-    "ProcessBuilder",
-    "java/lang/ProcessBuilder",
-];
-
-const REFLECTION_MARKERS: &[&str] = &[
-    "java/lang/reflect/Method",
-    "java/lang/reflect/Field",
-    "java/lang/reflect/Constructor",
-    "setAccessible",
-    "invoke",
-];
-
-const DYNAMIC_LOADING_MARKERS: &[&str] = &[
-    "defineClass",
-    "URLClassLoader",
-    "MethodHandles$Lookup",
-    "Lookup.defineClass",
-];
-
-const SCRIPT_ENGINE_MARKERS: &[&str] =
-    &["javax/script/ScriptEngineManager", "javax/script/ScriptEngine"];
-
-const JAVA_AGENT_MARKERS: &[&str] = &[
-    "java/lang/instrument/Instrumentation",
-    "Premain-Class",
-    "Agent-Class",
-    "Launcher-Agent-Class",
-];
-
-const ATTACH_API_MARKERS: &[&str] = &[
-    "com/sun/tools/attach/VirtualMachine",
-    "sun/tools/attach/HotSpotVirtualMachine",
-];
-
-const NATIVE_BRIDGE_MARKERS: &[&str] = &["com/sun/jna/Native", "com/sun/jna/Library", "sun/misc/Unsafe"];
+const MIN_BASE64_BLOB_LEN: usize = 512;
+const MIN_HEX_BLOB_LEN: usize = 1024;
+const BASE64_ENTROPY_THRESHOLD: f64 = 5.0;
+const HEX_ENTROPY_THRESHOLD: f64 = 3.8;
 
 impl CollapseScanner {
     const MAX_SCAN_STRING_LEN: usize = 2048;
@@ -104,8 +64,8 @@ impl CollapseScanner {
 
         let mut findings = Vec::new();
 
-        let looks_like_class_path = original_path_str.ends_with(".class")
-            || original_path_str.ends_with(".class/");
+        let looks_like_class_path =
+            original_path_str.ends_with(".class") || original_path_str.ends_with(".class/");
         let has_valid_class_magic = data.starts_with(b"\xCA\xFE\xBA\xBE");
 
         if looks_like_class_path && !has_valid_class_magic {
@@ -135,26 +95,22 @@ impl CollapseScanner {
     }
 
     fn check_network_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if let Some(ip_match) = IP_REGEX.find(string) {
-            let ip_str = ip_match.as_str().to_owned();
-            if !is_public_routable_ip(&ip_str) {
-                return;
+        for m in IP_REGEX.find_iter(string) {
+            let ip_str = m.as_str();
+            if is_public_routable_ip(ip_str) {
+                findings.push((FindingType::IpAddress, ip_str.to_string()));
             }
-            findings.push((FindingType::IpAddress, ip_str));
-            return;
         }
 
-        if let Some(ip_match) = IPV6_REGEX.find(string) {
-            let ip_str = ip_match.as_str().to_owned();
-            if !is_public_routable_ip(&ip_str) {
-                return;
+        for m in IPV6_REGEX.find_iter(string) {
+            let ip_str = m.as_str();
+            if is_public_routable_ip(ip_str) {
+                findings.push((FindingType::IpV6Address, ip_str.to_string()));
             }
-            findings.push((FindingType::IpV6Address, ip_str));
-            return;
         }
 
-        if let Some(url_match) = URL_REGEX.find(string) {
-            let url_match = url_match.as_str();
+        for m in URL_REGEX.find_iter(string) {
+            let url_match = m.as_str();
             let domain = extract_domain(url_match);
 
             if !domain.is_empty()
@@ -162,17 +118,16 @@ impl CollapseScanner {
                 && !self.is_suspicious_domain(&domain)
                 && !self.is_local_host(&domain)
             {
-                if is_known_good_ip(&domain) {
-                    return;
+                if !is_known_good_ip(&domain) {
+                    findings.push((FindingType::Url, url_match.to_string()));
                 }
-                findings.push((FindingType::Url, url_match.to_string()));
             }
         }
     }
 
     fn is_local_host(&self, host: &str) -> bool {
         let lower = host.to_lowercase();
-        lower == "localhost"
+        matches!(lower.as_str(), "localhost" | "127.0.0.1" | "::1")
             || lower.ends_with(".local")
             || lower.ends_with(".lan")
             || lower.ends_with(".internal")
@@ -186,30 +141,25 @@ impl CollapseScanner {
         findings: &mut Vec<(FindingType, String)>,
     ) {
         for cap in URL_REGEX.captures_iter(string) {
-            if let Some(url_match) = cap.get(0) {
-                let url_str = url_match.as_str();
-                let domain = extract_domain(url_str).to_lowercase();
+            let url_str = &cap[0];
+            let domain = extract_domain(url_str).to_lowercase();
 
-                if domain.is_empty() {
-                    continue;
-                }
+            if domain.is_empty() {
+                continue;
+            }
 
-                let is_discord_domain = domain.ends_with("discord.com")
-                    || domain.ends_with("discordapp.com")
-                    || domain.contains(".discord.com")
-                    || domain.contains(".discordapp.com");
+            let is_discord = domain.ends_with("discord.com") || domain.ends_with("discordapp.com");
 
-                if is_discord_domain && url_str.to_lowercase().contains("/api/webhooks/") {
-                    findings.push((
-                        FindingType::DiscordWebhook,
-                        format!("Discord Webhook: {}", url_str),
-                    ));
-                } else if self.is_suspicious_domain(&domain) {
-                    findings.push((
-                        FindingType::SuspiciousUrl,
-                        format!("Suspicious URL: {}", url_str),
-                    ));
-                }
+            if is_discord && url_str.contains("/api/webhooks/") {
+                findings.push((
+                    FindingType::DiscordWebhook,
+                    format!("Discord Webhook: {}", url_str),
+                ));
+            } else if self.is_suspicious_domain(&domain) {
+                findings.push((
+                    FindingType::SuspiciousUrl,
+                    format!("Suspicious URL: {}", url_str),
+                ));
             }
         }
     }
@@ -221,18 +171,16 @@ impl CollapseScanner {
             return true;
         }
 
-        for suspicious in &self.suspicious_domains {
-            if lower_domain == *suspicious || lower_domain.ends_with(&format!(".{}", suspicious)) {
-                return true;
-            }
-        }
-
-        false
+        self.suspicious_domains.iter().any(|suspicious| {
+            lower_domain.ends_with(suspicious)
+                && (lower_domain.len() == suspicious.len()
+                    || lower_domain.as_bytes()[lower_domain.len() - suspicious.len() - 1] == b'.')
+        })
     }
 
     fn check_malicious_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
-        if let Some(keyword) = MALICIOUS_PATTERN_REGEX.find(string) {
-            let keyword = keyword.as_str();
+        for m in MALICIOUS_PATTERN_REGEX.find_iter(string) {
+            let keyword = m.as_str();
             let keyword_lower = keyword.to_lowercase();
             if !self.ignored_suspicious_keywords.contains(&keyword_lower) {
                 findings.push((
@@ -462,12 +410,6 @@ impl CollapseScanner {
         findings.dedup();
     }
 
-    fn cache_findings_new(&self, hash: u64, findings: &[(FindingType, String)]) {
-        let vec = findings.to_vec();
-        let arc = Arc::new(vec);
-        let _ = self.result_cache.get_with(hash, || arc.clone());
-    }
-
     pub(crate) fn calculate_danger_score(
         &self,
         findings: &[(FindingType, String)],
@@ -486,59 +428,53 @@ impl CollapseScanner {
             return 10;
         }
 
-        let mut score_acc: usize = 0;
+        let mut score_acc: f32 = 0.0;
+
         for (ftype, count) in &type_counts {
-            let weight = ftype.base_score() as usize;
-            let cap = ftype.max_contribution() as usize;
-            let contrib = (count * weight).min(cap);
+            let weight = ftype.base_score() as f32;
+            let cap = ftype.max_contribution() as f32;
+            let contrib = (*count as f32 * weight).min(cap);
             score_acc += contrib;
         }
 
         if let Some(ri) = resource_info {
             if ri.is_dead_class_candidate {
-                score_acc += 3;
+                score_acc += 2.0;
             }
         }
 
-        let suspicious_url_count = *type_counts.get(&FindingType::SuspiciousUrl).unwrap_or(&0);
-        let suspicious_keyword_count = *type_counts
-            .get(&FindingType::SuspiciousKeyword)
-            .unwrap_or(&0);
-        let suspicious_api_count = *type_counts.get(&FindingType::SuspiciousApi).unwrap_or(&0);
-        let encoded_payload_count = *type_counts.get(&FindingType::EncodedPayload).unwrap_or(&0);
-        let tampered_class_count = *type_counts.get(&FindingType::TamperedClass).unwrap_or(&0);
-        let suspicious_archive_count = *type_counts
-            .get(&FindingType::SuspiciousArchiveEntry)
-            .unwrap_or(&0);
-        let native_library_count = *type_counts.get(&FindingType::NativeLibrary).unwrap_or(&0);
-        let ip_address_count = *type_counts.get(&FindingType::IpAddress).unwrap_or(&0)
-            + *type_counts.get(&FindingType::IpV6Address).unwrap_or(&0);
+        let has_network = type_counts.contains_key(&FindingType::IpAddress)
+            || type_counts.contains_key(&FindingType::IpV6Address)
+            || type_counts.contains_key(&FindingType::Url)
+            || type_counts.contains_key(&FindingType::SuspiciousUrl);
 
-        if suspicious_url_count > 0
-            && (suspicious_keyword_count > 0 || ip_address_count > 0 || suspicious_api_count > 0)
-        {
-            score_acc += 5;
+        let has_suspicious_logic = type_counts.contains_key(&FindingType::SuspiciousKeyword)
+            || type_counts.contains_key(&FindingType::SuspiciousApi);
+
+        let has_obfuscation = type_counts.contains_key(&FindingType::EncodedPayload)
+            || type_counts.contains_key(&FindingType::TamperedClass)
+            || type_counts.contains_key(&FindingType::ObfuscationUnicode);
+
+        if has_network && has_suspicious_logic {
+            score_acc *= 1.5;
         }
 
-        if encoded_payload_count > 0
-            && (suspicious_keyword_count > 0 || suspicious_api_count > 0 || suspicious_url_count > 0)
-        {
-            score_acc += 3;
+        if has_suspicious_logic && has_obfuscation {
+            score_acc += 2.0;
         }
 
-        if tampered_class_count > 0 {
-            score_acc += 2;
-        }
+        let category_count = (if has_network { 1 } else { 0 })
+            + (if has_suspicious_logic { 1 } else { 0 })
+            + (if has_obfuscation { 1 } else { 0 });
 
-        if suspicious_archive_count > 0 && native_library_count > 0 {
-            score_acc += 2;
-        }
+        let final_score = match category_count {
+            0 => 1,
+            1 => (score_acc as u8).min(3),
+            2 => (score_acc as u8).min(7),
+            _ => (score_acc as u8).min(10),
+        };
 
-        if type_counts.len() >= 3 {
-            score_acc += 2;
-        }
-
-        (score_acc as i32).clamp(1, 10) as u8
+        final_score.clamp(1, 10)
     }
 
     pub(crate) fn generate_danger_explanation(
@@ -558,22 +494,22 @@ impl CollapseScanner {
 
         if score >= 8 {
             explanations.push(format!(
-                "{}HIGH RISK: This file contains multiple high-risk indicators!",
+                "{}CRITICAL RISK: Multiple high-confidence malicious indicators detected!",
                 warn_prefix
             ));
         } else if score >= 5 {
             explanations.push(format!(
-                "{}MODERATE RISK: This file contains several suspicious elements.",
+                "{}MODERATE TO HIGH RISK: Several suspicious elements found in combination.",
                 warn_prefix
             ));
         } else if score >= 3 {
             explanations.push(format!(
-                "{}LOW RISK: This file contains some potentially concerning elements.",
+                "{}LOW TO MEDIUM RISK: Some suspicious elements detected, but evidence is isolated.",
                 warn_prefix
             ));
         } else {
             explanations.push(format!(
-                "{}MINIMAL RISK: Few or no concerning elements detected.",
+                "{}MINIMAL RISK: No strong evidence of malicious behavior detected.",
                 ok_prefix
             ));
         }
@@ -702,26 +638,25 @@ impl CollapseScanner {
         explanations
     }
 
-    fn handle_cached_findings(
+    fn build_scan_result(
         &self,
-        cached_findings_arc: Arc<Vec<(FindingType, String)>>,
+        findings_arc: Arc<Vec<(FindingType, String)>>,
         original_path_str: &str,
         resource_info: Option<ResourceInfo>,
+        class_details: Option<ClassDetails>,
     ) -> Result<Option<ScanResult>, ScanError> {
-        let cached_findings: &[(FindingType, String)] = cached_findings_arc.as_ref();
-
-        if !cached_findings.is_empty() || self.options.verbose {
-            let danger_score = self.calculate_danger_score(cached_findings, resource_info.as_ref());
+        if !findings_arc.is_empty() || self.options.verbose {
+            let danger_score = self.calculate_danger_score(&findings_arc, resource_info.as_ref());
             let danger_explanation = self.generate_danger_explanation(
                 danger_score,
-                cached_findings,
+                &findings_arc,
                 resource_info.as_ref(),
             );
 
             Ok(Some(ScanResult {
                 file_path: original_path_str.to_string(),
-                matches: cached_findings_arc.clone(),
-                class_details: None,
+                matches: findings_arc,
+                class_details,
                 resource_info,
                 danger_score,
                 danger_explanation,
@@ -729,6 +664,15 @@ impl CollapseScanner {
         } else {
             Ok(None)
         }
+    }
+
+    fn handle_cached_findings(
+        &self,
+        cached_findings_arc: Arc<Vec<(FindingType, String)>>,
+        original_path_str: &str,
+        resource_info: Option<ResourceInfo>,
+    ) -> Result<Option<ScanResult>, ScanError> {
+        self.build_scan_result(cached_findings_arc, original_path_str, resource_info, None)
     }
 
     fn handle_non_standard_class(
@@ -763,24 +707,12 @@ impl CollapseScanner {
             *found_flag = true;
         }
 
-        self.cache_findings_new(data_hash, findings);
+        let findings_arc = Arc::new(findings.to_owned());
+        let _ = self
+            .result_cache
+            .get_with(data_hash, || findings_arc.clone());
 
-        if !findings.is_empty() || self.options.verbose {
-            let danger_score = self.calculate_danger_score(findings, resource_info.as_ref());
-            let danger_explanation =
-                self.generate_danger_explanation(danger_score, findings, resource_info.as_ref());
-
-            Ok(Some(ScanResult {
-                file_path: original_path_str.to_string(),
-                matches: Arc::new(findings.to_owned()),
-                class_details: None,
-                resource_info,
-                danger_score,
-                danger_explanation,
-            }))
-        } else {
-            Ok(None)
-        }
+        self.build_scan_result(findings_arc, original_path_str, resource_info, None)
     }
 
     fn analyze_class_details(
@@ -794,64 +726,7 @@ impl CollapseScanner {
             self.check_name_obfuscation(class_details, findings);
         }
 
-        let string_set: HashSet<&str> = class_details.strings.iter().map(String::as_str).collect();
-
-        self.record_api_usage(
-            &string_set,
-            PROCESS_EXECUTION_MARKERS,
-            "Process execution API usage",
-            findings,
-        );
-        self.record_api_usage(
-            &string_set,
-            REFLECTION_MARKERS,
-            "Reflection-based access",
-            findings,
-        );
-        self.record_api_usage(
-            &string_set,
-            DYNAMIC_LOADING_MARKERS,
-            "Dynamic class loading or definition",
-            findings,
-        );
-        self.record_api_usage(
-            &string_set,
-            SCRIPT_ENGINE_MARKERS,
-            "Script engine execution",
-            findings,
-        );
-        self.record_api_usage(
-            &string_set,
-            JAVA_AGENT_MARKERS,
-            "Java agent instrumentation",
-            findings,
-        );
-        self.record_api_usage(
-            &string_set,
-            ATTACH_API_MARKERS,
-            "JVM attach API usage",
-            findings,
-        );
-        self.record_api_usage(
-            &string_set,
-            NATIVE_BRIDGE_MARKERS,
-            "Native bridge or Unsafe API usage",
-            findings,
-        );
-
-        drop(string_set);
-    }
-
-    fn record_api_usage(
-        &self,
-        string_set: &HashSet<&str>,
-        markers: &[&str],
-        message: &str,
-        findings: &mut Vec<(FindingType, String)>,
-    ) {
-        if markers.iter().any(|marker| string_set.contains(marker)) {
-            findings.push((FindingType::SuspiciousApi, message.to_string()));
-        }
+        ApiAnalyzer::analyze(class_details, findings);
     }
 
     fn prepare_strings_for_scanning<'a>(&self, class_details: &'a ClassDetails) -> Vec<&'a String> {
@@ -968,22 +843,12 @@ impl CollapseScanner {
         resource_info: Option<ResourceInfo>,
     ) -> Result<Option<ScanResult>, ScanError> {
         self.normalize_findings(&mut findings);
-
-        if !findings.is_empty() || self.options.verbose {
-            let danger_score = self.calculate_danger_score(&findings, resource_info.as_ref());
-            let danger_explanation =
-                self.generate_danger_explanation(danger_score, &findings, resource_info.as_ref());
-
-            Ok(Some(ScanResult {
-                file_path: original_path_str.to_string(),
-                matches: Arc::new(findings),
-                class_details: Some(class_details),
-                resource_info,
-                danger_score,
-                danger_explanation,
-            }))
-        } else {
-            Ok(None)
-        }
+        let findings_arc = Arc::new(findings);
+        self.build_scan_result(
+            findings_arc,
+            original_path_str,
+            resource_info,
+            Some(class_details),
+        )
     }
 }

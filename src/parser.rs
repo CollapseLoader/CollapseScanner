@@ -36,7 +36,6 @@ fn resolve_utf8<'a>(
     pool: &'a [ConstantPoolEntry],
     index: u16,
     path: &str,
-    _context: &str,
 ) -> Result<&'a str, ScanError> {
     if index == 0 || (index as usize) > pool.len() {
         return Err(ScanError::ClassParseError {
@@ -85,8 +84,7 @@ fn resolve_class_name(
 
     match &pool[index as usize - 1] {
         ConstantPoolEntry::Class(name_index) => {
-            let class_name_context = format!("name for Class at {} ('{}')", index, context);
-            Ok(resolve_utf8(pool, *name_index, path, &class_name_context)?.to_string())
+            Ok(resolve_utf8(pool, *name_index, path)?.to_string())
         }
         other => Err(ScanError::ClassParseError {
             path: path.to_string(),
@@ -129,10 +127,7 @@ where
         let descriptor_index = cursor.read_u16::<BigEndian>()?;
         let attributes_count = cursor.read_u16::<BigEndian>()?;
 
-        let name_context = format!("{} {} name", member_kind, index);
-        let descriptor_context = format!("{} {} descriptor", member_kind, index);
-
-        let name = resolve_utf8(pool, name_index, file_path_str, &name_context)
+        let name = resolve_utf8(pool, name_index, file_path_str)
             .map(str::to_string)
             .unwrap_or_else(|e| {
                 if verbose {
@@ -141,7 +136,7 @@ where
                 format!("<{}_{}>", invalid_name_prefix, name_index)
             });
 
-        let descriptor = resolve_utf8(pool, descriptor_index, file_path_str, &descriptor_context)
+        let descriptor = resolve_utf8(pool, descriptor_index, file_path_str)
             .map(str::to_string)
             .unwrap_or_else(|e| {
                 if verbose {
@@ -475,12 +470,7 @@ pub fn parse_class_structure(
         ConstantPoolEntry::String(index) => Some(*index),
         _ => None,
     }) {
-        match resolve_utf8(
-            &constant_pool,
-            utf8_index,
-            original_path_str,
-            "String constant data",
-        ) {
+        match resolve_utf8(&constant_pool, utf8_index, original_path_str) {
             Ok(s) => {
                 string_set.insert(s.to_string());
             }

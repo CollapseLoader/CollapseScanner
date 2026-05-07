@@ -10,68 +10,69 @@ lazy_static::lazy_static! {
             .build()
     };
 
-    pub static ref SAFE_STRING_BLOOM: std::sync::RwLock<bloomfilter::Bloom<String>> = {
+    pub static ref SAFE_STRING_BLOOM: std::sync::RwLock<bloomfilter::Bloom<u64>> = {
         let capacity = crate::config::SYSTEM_CONFIG.safe_string_cache_capacity;
         std::sync::RwLock::new(
             bloomfilter::Bloom::new_for_fp_rate(capacity, 0.01).unwrap()
         )
     };
 
-    pub static ref SUSSY_DOMAINS: HashSet<String> = {
-        [
-            "discord.com",
-            "discordapp.com",
-            "pastebin.com",
-            "bit.ly",
-            "tinyurl.com",
-        ]
-        .iter()
-        .map(|&s| s.to_lowercase())
-        .collect()
-    };
+    pub static ref SUSSY_DOMAINS: HashSet<String> = [
+        "discord.com",
+        "discordapp.com",
+        "pastebin.com",
+        "bit.ly",
+        "tinyurl.com",
+    ]
+    .iter()
+    .map(|&s| s.to_lowercase())
+    .collect();
 }
 
+/// Helper to get a fast hash for bloom filter operations.
+fn get_bloom_hash(s: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Returns `true` if `s` has previously been determined to be a safe (non-suspicious) string.
 pub fn is_cached_safe_string(s: &str) -> bool {
     if SAFE_STRING_CACHE.get(s).is_some() {
         return true;
     }
 
-    let string_owned = s.to_owned();
-    if let Ok(bloom_guard) = SAFE_STRING_BLOOM.try_read() {
-        if !bloom_guard.check(&string_owned) {
-            return false;
-        }
-    } else {
-        return false;
+    let h = get_bloom_hash(s);
+    match SAFE_STRING_BLOOM.try_read() {
+        Ok(guard) if !guard.check(&h) => return false,
+        _ => {}
     }
 
     SAFE_STRING_CACHE.get(s).is_some()
 }
 
-pub fn cache_safe_string(s: &str) -> bool {
-    let string_owned = s.to_string();
+/// Marks `s` as a safe string so future scans can skip it quickly.
+pub fn cache_safe_string(s: &str) {
+    let h = get_bloom_hash(s);
 
-    if let Ok(mut bloom_guard) = SAFE_STRING_BLOOM.try_write() {
-        bloom_guard.set(&string_owned);
-    } else if let Ok(mut bloom_guard) = SAFE_STRING_BLOOM.write() {
-        bloom_guard.set(&string_owned);
+    if let Ok(mut guard) = SAFE_STRING_BLOOM.try_write() {
+        guard.set(&h);
+    } else if let Ok(mut guard) = SAFE_STRING_BLOOM.write() {
+        guard.set(&h);
     }
 
-    SAFE_STRING_CACHE.insert(string_owned, ());
-    true
+    SAFE_STRING_CACHE.insert(s.to_string(), ());
 }
 
+/// Produces a fast, representative hash of `data` for use as a cache key.
 pub fn calculate_detection_hash(data: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
 
     if data.len() > 1024 {
-        let start = &data[..512];
-        let middle = &data[data.len() / 2 - 256..data.len() / 2 + 256];
-        let end = &data[data.len() - 512..];
-
-        start.hash(&mut hasher);
-        middle.hash(&mut hasher);
-        end.hash(&mut hasher);
+        data[..512].hash(&mut hasher);
+        let mid = data.len() / 2;
+        data[mid - 256..mid + 256].hash(&mut hasher);
+        data[data.len() - 512..].hash(&mut hasher);
         (data.len() as u64).hash(&mut hasher);
     } else {
         data.hash(&mut hasher);

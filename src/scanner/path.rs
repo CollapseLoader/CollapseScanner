@@ -8,6 +8,12 @@ use crate::errors::ScanError;
 use crate::scanner::scan::CollapseScanner;
 use crate::types::ScanResult;
 
+fn has_extension(path: &Path, exts: &[&str]) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| exts.iter().any(|e| ext.eq_ignore_ascii_case(e)))
+}
+
 impl CollapseScanner {
     pub(crate) fn should_scan(&self, internal_path: &str) -> bool {
         if self
@@ -65,9 +71,9 @@ impl CollapseScanner {
             }
         }
 
-        if path.extension().is_some_and(|ext| ext == "jar") {
+        if has_extension(path, &["jar"]) {
             self.scan_jar_file(path)
-        } else if path.extension().is_some_and(|ext| ext == "class") {
+        } else if has_extension(path, &["class"]) {
             let filename = path.file_name().unwrap_or_default().to_string_lossy();
             if !self.should_scan(&filename) {
                 if self.options.verbose {

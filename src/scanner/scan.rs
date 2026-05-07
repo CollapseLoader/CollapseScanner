@@ -34,6 +34,9 @@ impl CollapseScanner {
             }
             match Self::load_ignore_list_from_file(path) {
                 Ok(ignored) => {
+                    if options.verbose {
+                        println!("[+] Loaded {} keywords to ignore", ignored.len());
+                    }
                     ignored_suspicious_keywords.extend(ignored.clone());
                 }
                 Err(e) => {

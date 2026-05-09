@@ -1,4 +1,4 @@
-use crate::types::{ClassDetails, FindingType};
+use crate::types::{ClassDetails, FindingType, MethodCallInfo};
 use crate::utils::truncate_string;
 use std::collections::HashSet;
 
@@ -58,7 +58,7 @@ impl ApiAnalyzer {
             .iter()
             .any(|m| string_set.contains(m))
         {
-            let cmd = Self::guess_command(&details.strings);
+            let cmd = Self::guess_command(details);
             findings.push((
                 FindingType::SuspiciousApi,
                 format!(
@@ -130,7 +130,15 @@ impl ApiAnalyzer {
         }
     }
 
-    fn guess_command(strings: &[String]) -> String {
+    fn guess_command(details: &ClassDetails) -> String {
+        if let Some(command) = Self::guess_command_from_calls(&details.method_calls) {
+            return command;
+        }
+
+        Self::guess_command_from_strings(&details.strings)
+    }
+
+    fn guess_command_from_strings(strings: &[String]) -> String {
         for s in strings {
             let lower = s.to_lowercase();
             if lower.contains("cmd.exe")
@@ -147,6 +155,10 @@ impl ApiAnalyzer {
     }
 
     fn guess_reflected_target(details: &ClassDetails) -> String {
+        if let Some(target) = Self::guess_reflected_target_from_calls(&details.method_calls) {
+            return target;
+        }
+
         for method in &details.methods {
             if method.name == "getDeclaredMethod" || method.name == "getDeclaredField" {
                 return format!("Method/Field: {}", method.name);
@@ -158,5 +170,95 @@ impl ApiAnalyzer {
             }
         }
         "".to_string()
+    }
+
+    fn guess_command_from_calls(method_calls: &[MethodCallInfo]) -> Option<String> {
+        for call in method_calls {
+            if Self::is_process_api_call(call) {
+                let args = Self::format_arguments(&call.arguments);
+                if !args.is_empty() {
+                    return Some(truncate_string(&args, 80));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn guess_reflected_target_from_calls(method_calls: &[MethodCallInfo]) -> Option<String> {
+        for call in method_calls {
+            if call.owner == "java/lang/Class"
+                && matches!(
+                    call.name.as_str(),
+                    "getDeclaredMethod" | "getDeclaredField" | "getMethod" | "getField"
+                )
+            {
+                if let Some(target) = call.arguments.first() {
+                    if !target.is_empty() {
+                        return Some(truncate_string(target, 80));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn is_process_api_call(call: &MethodCallInfo) -> bool {
+        (call.owner == "java/lang/Runtime" && call.name == "exec")
+            || (call.owner == "java/lang/ProcessBuilder" && call.name == "<init>")
+            || (call.owner == "java/lang/ProcessBuilder" && call.name == "command")
+    }
+
+    fn format_arguments(arguments: &[String]) -> String {
+        arguments
+            .iter()
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_details(method_calls: Vec<MethodCallInfo>) -> ClassDetails {
+        ClassDetails {
+            class_name: "Example".to_string(),
+            superclass_name: "java/lang/Object".to_string(),
+            interfaces: Vec::new(),
+            methods: Vec::new(),
+            method_calls,
+            fields: Vec::new(),
+            strings: Vec::new(),
+            access_flags: 0,
+        }
+    }
+
+    #[test]
+    fn prefers_process_arguments_from_call_sites() {
+        let details = empty_details(vec![MethodCallInfo {
+            owner: "java/lang/Runtime".to_string(),
+            name: "exec".to_string(),
+            descriptor: "(Ljava/lang/String;)Ljava/lang/Process;".to_string(),
+            arguments: vec!["cmd.exe".to_string(), "/c".to_string(), "calc".to_string()],
+        }]);
+
+        assert_eq!(ApiAnalyzer::guess_command(&details), "cmd.exe /c calc");
+    }
+
+    #[test]
+    fn prefers_reflection_arguments_from_call_sites() {
+        let details = empty_details(vec![MethodCallInfo {
+            owner: "java/lang/Class".to_string(),
+            name: "getDeclaredMethod".to_string(),
+            descriptor: "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;"
+                .to_string(),
+            arguments: vec!["loadClass".to_string()],
+        }]);
+
+        assert_eq!(ApiAnalyzer::guess_reflected_target(&details), "loadClass");
     }
 }

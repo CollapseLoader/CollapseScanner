@@ -15,7 +15,6 @@ zip = "8.6.0"
 indicatif = "0.18.4"
 lazy_static = "1.5.0"
 url = "2.5.8"
-hex = "0.4.3"
 byteorder = "1.5.0"
 walkdir = "2.5.0"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -25,12 +24,10 @@ thiserror = "2.0.18"
 rayon = "1.12.0"
 encoding_rs = "0.8.35"
 wildmatch = "2.6.1"
-lru = "0.18.0"
 sysinfo = "0.39.0"
 bloomfilter = "3.0.1"
 ipnet = "2.12.0"
 moka = { version = "0.12.15", features = ["sync"] }
-memmap2 = "0.9.10"
 colored = { version = "3.1.1" }
 clap = { version = "4.6.1", features = ["derive"] }
 

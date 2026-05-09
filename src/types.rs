@@ -133,6 +133,8 @@ pub struct ClassDetails {
     pub superclass_name: String,
     pub interfaces: Vec<String>,
     pub methods: Vec<MethodInfo>,
+    #[serde(default)]
+    pub method_calls: Vec<MethodCallInfo>,
     pub fields: Vec<FieldInfo>,
     pub strings: Vec<String>,
     pub access_flags: u16,
@@ -143,6 +145,14 @@ pub struct MethodInfo {
     pub name: String,
     pub descriptor: String,
     pub access_flags: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MethodCallInfo {
+    pub owner: String,
+    pub name: String,
+    pub descriptor: String,
+    pub arguments: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,9 +1,9 @@
 use crate::errors::ScanError;
-use crate::types::{ClassDetails, ConstantPoolEntry, FieldInfo, MethodInfo};
+use crate::types::{ClassDetails, ConstantPoolEntry, FieldInfo, MethodCallInfo, MethodInfo};
 use byteorder::{BigEndian, ReadBytesExt};
 use colored::Colorize;
 use encoding_rs::UTF_8;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::io::{Cursor, Seek, SeekFrom};
 
 #[inline]
@@ -150,6 +150,345 @@ where
     }
 
     Ok(members)
+}
+
+fn resolve_name_and_type(
+    pool: &[ConstantPoolEntry],
+    index: u16,
+    path: &str,
+) -> Result<(String, String), ScanError> {
+    if index == 0 || (index as usize) > pool.len() {
+        return Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!("Invalid NameAndType index {}", index),
+        });
+    }
+
+    match &pool[index as usize - 1] {
+        ConstantPoolEntry::NameAndType(name_index, descriptor_index) => Ok((
+            resolve_utf8(pool, *name_index, path)?.to_string(),
+            resolve_utf8(pool, *descriptor_index, path)?.to_string(),
+        )),
+        other => Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!("Expected NameAndType at CP index {}, found {:?}", index, other),
+        }),
+    }
+}
+
+fn resolve_method_ref(
+    pool: &[ConstantPoolEntry],
+    index: u16,
+    path: &str,
+) -> Result<(String, String, String), ScanError> {
+    if index == 0 || (index as usize) > pool.len() {
+        return Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!("Invalid method reference index {}", index),
+        });
+    }
+
+    match &pool[index as usize - 1] {
+        ConstantPoolEntry::Methodref(class_index, name_type_index)
+        | ConstantPoolEntry::InterfaceMethodref(class_index, name_type_index) => {
+            let owner = resolve_class_name(pool, *class_index, path, "method_ref_owner")?;
+            let (name, descriptor) = resolve_name_and_type(pool, *name_type_index, path)?;
+            Ok((owner, name, descriptor))
+        }
+        other => Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!("Expected Methodref at CP index {}, found {:?}", index, other),
+        }),
+    }
+}
+
+fn resolve_ldc_string(
+    pool: &[ConstantPoolEntry],
+    index: u16,
+    path: &str,
+) -> Result<Option<String>, ScanError> {
+    if index == 0 || (index as usize) > pool.len() {
+        return Err(ScanError::ClassParseError {
+            path: path.to_string(),
+            msg: format!("Invalid LDC index {}", index),
+        });
+    }
+
+    match &pool[index as usize - 1] {
+        ConstantPoolEntry::String(utf8_index) => Ok(Some(resolve_utf8(pool, *utf8_index, path)?.to_string())),
+        _ => Ok(None),
+    }
+}
+
+fn read_u32_at(code: &[u8], offset: usize) -> Result<u32, ScanError> {
+    if offset + 4 > code.len() {
+        return Err(ScanError::ClassParseError {
+            path: "<bytecode>".to_string(),
+            msg: format!("Unexpected EOF while reading bytecode at offset {}", offset),
+        });
+    }
+
+    Ok(u32::from_be_bytes([
+        code[offset],
+        code[offset + 1],
+        code[offset + 2],
+        code[offset + 3],
+    ]))
+}
+
+fn bytecode_instruction_length(code: &[u8], pc: usize) -> Result<usize, ScanError> {
+    let opcode = code[pc];
+    Ok(match opcode {
+        0x10 | 0x12 => 2,
+        0x11 | 0x13 | 0x14 => 3,
+        0x15..=0x19 | 0x36..=0x3A => 2,
+        0x84 => 3,
+        0x99..=0xA8 => 3,
+        0xA9 => 2,
+        0xAA => {
+            let pad = (4 - ((pc + 1) % 4)) % 4;
+            let base = pc + 1 + pad;
+            let low = read_u32_at(code, base + 4)?;
+            let high = read_u32_at(code, base + 8)?;
+            let entries = high.saturating_sub(low).saturating_add(1) as usize;
+            1 + pad + 12 + entries * 4
+        }
+        0xAB => {
+            let pad = (4 - ((pc + 1) % 4)) % 4;
+            let base = pc + 1 + pad;
+            let pairs = read_u32_at(code, base + 4)? as usize;
+            1 + pad + 8 + pairs * 8
+        }
+        0xAC..=0xB1 => 1,
+        0xB2..=0xB8 => 3,
+        0xB9 | 0xBA => 5,
+        0xBB => 3,
+        0xBC => 2,
+        0xBD => 3,
+        0xBE..=0xC3 => 1,
+        0xC4 => {
+            if pc + 1 >= code.len() {
+                return Err(ScanError::ClassParseError {
+                    path: "<bytecode>".to_string(),
+                    msg: format!("Unexpected EOF while reading wide opcode at offset {}", pc),
+                });
+            }
+
+            match code[pc + 1] {
+                0x15..=0x19 | 0x36..=0x3A | 0xA9 => 4,
+                0x84 => 6,
+                other => {
+                    return Err(ScanError::ClassParseError {
+                        path: "<bytecode>".to_string(),
+                        msg: format!("Unsupported wide opcode {:02X} at offset {}", other, pc),
+                    })
+                }
+            }
+        }
+        0xC5 => 4,
+        0xC6 | 0xC7 => 3,
+        0xC8 | 0xC9 => 5,
+        0xCA => 1,
+        0x00..=0x0F
+        | 0x1A..=0x35
+        | 0x3B..=0x83
+        | 0x85..=0x98 => 1,
+        other => {
+            return Err(ScanError::ClassParseError {
+                path: "<bytecode>".to_string(),
+                msg: format!("Unsupported opcode {:02X} at offset {}", other, pc),
+            })
+        }
+    })
+}
+
+fn push_recent_string(recent_strings: &mut VecDeque<String>, value: String) {
+    recent_strings.push_back(value);
+    while recent_strings.len() > 6 {
+        recent_strings.pop_front();
+    }
+}
+
+fn parse_method_invocations(
+    code: &[u8],
+    pool: &[ConstantPoolEntry],
+    file_path_str: &str,
+) -> Result<Vec<MethodCallInfo>, ScanError> {
+    let mut invocations = Vec::new();
+    let mut recent_strings = VecDeque::new();
+    let mut pc = 0usize;
+
+    while pc < code.len() {
+        let opcode = code[pc];
+        match opcode {
+            0x12 => {
+                if pc + 1 >= code.len() {
+                    return Err(ScanError::ClassParseError {
+                        path: file_path_str.to_string(),
+                        msg: format!("Unexpected EOF while reading ldc at offset {}", pc),
+                    });
+                }
+
+                let index = code[pc + 1] as u16;
+                if let Some(value) = resolve_ldc_string(pool, index, file_path_str)? {
+                    push_recent_string(&mut recent_strings, value);
+                }
+            }
+            0x13 => {
+                if pc + 2 >= code.len() {
+                    return Err(ScanError::ClassParseError {
+                        path: file_path_str.to_string(),
+                        msg: format!("Unexpected EOF while reading ldc_w at offset {}", pc),
+                    });
+                }
+
+                let index = u16::from_be_bytes([code[pc + 1], code[pc + 2]]);
+                if let Some(value) = resolve_ldc_string(pool, index, file_path_str)? {
+                    push_recent_string(&mut recent_strings, value);
+                }
+            }
+            0xB6..=0xB9 => {
+                let index = if opcode == 0xB9 {
+                    if pc + 4 >= code.len() {
+                        return Err(ScanError::ClassParseError {
+                            path: file_path_str.to_string(),
+                            msg: format!(
+                                "Unexpected EOF while reading invokeinterface at offset {}",
+                                pc
+                            ),
+                        });
+                    }
+
+                    u16::from_be_bytes([code[pc + 1], code[pc + 2]])
+                } else {
+                    if pc + 2 >= code.len() {
+                        return Err(ScanError::ClassParseError {
+                            path: file_path_str.to_string(),
+                            msg: format!("Unexpected EOF while reading invoke at offset {}", pc),
+                        });
+                    }
+
+                    u16::from_be_bytes([code[pc + 1], code[pc + 2]])
+                };
+
+                if let Ok((owner, name, descriptor)) = resolve_method_ref(pool, index, file_path_str)
+                {
+                    invocations.push(MethodCallInfo {
+                        owner,
+                        name,
+                        descriptor,
+                        arguments: recent_strings.iter().cloned().collect(),
+                    });
+                }
+            }
+            0xBA => {
+                if pc + 4 >= code.len() {
+                    return Err(ScanError::ClassParseError {
+                        path: file_path_str.to_string(),
+                        msg: format!("Unexpected EOF while reading invokedynamic at offset {}", pc),
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        let length = bytecode_instruction_length(code, pc)?;
+        pc += length;
+    }
+
+    Ok(invocations)
+}
+
+fn parse_methods(
+    cursor: &mut Cursor<&[u8]>,
+    count: u16,
+    file_path_str: &str,
+    verbose: bool,
+    pool: &[ConstantPoolEntry],
+) -> Result<(Vec<MethodInfo>, Vec<MethodCallInfo>), ScanError> {
+    let mut members = Vec::with_capacity(count as usize);
+    let mut method_calls = Vec::new();
+
+    for index in 0..count {
+        check_bounds(cursor, 8, file_path_str, &format!("method header {}", index))?;
+        let access_flags = cursor.read_u16::<BigEndian>()?;
+        let name_index = cursor.read_u16::<BigEndian>()?;
+        let descriptor_index = cursor.read_u16::<BigEndian>()?;
+        let attributes_count = cursor.read_u16::<BigEndian>()?;
+
+        let name = resolve_utf8(pool, name_index, file_path_str)
+            .map(str::to_string)
+            .unwrap_or_else(|e| {
+                if verbose {
+                    eprintln!("(!) method name resolution error: {}", e);
+                }
+                format!("<INVALID_METHOD_NAME_INDEX_{}>", name_index)
+            });
+
+        let descriptor = resolve_utf8(pool, descriptor_index, file_path_str)
+            .map(str::to_string)
+            .unwrap_or_else(|e| {
+                if verbose {
+                    eprintln!("(!) method descriptor resolution error: {}", e);
+                }
+                format!("<INVALID_DESCRIPTOR_INDEX_{}>", descriptor_index)
+            });
+
+        for _ in 0..attributes_count {
+            check_bounds(cursor, 6, file_path_str, "method attribute header")?;
+            let attribute_name_index = cursor.read_u16::<BigEndian>()?;
+            let attribute_length = cursor.read_u32::<BigEndian>()? as u64;
+            let attribute_name = resolve_utf8(pool, attribute_name_index, file_path_str)
+                .map(str::to_string)
+                .unwrap_or_default();
+
+            if attribute_name == "Code" {
+                check_bounds(cursor, attribute_length, file_path_str, "Code attribute body")?;
+                let code_start = cursor.position() as usize;
+                let code_slice = cursor.get_ref();
+                if code_start + attribute_length as usize > code_slice.len() {
+                    return Err(ScanError::ClassParseError {
+                        path: file_path_str.to_string(),
+                        msg: format!("Code attribute overruns buffer at offset {}", code_start),
+                    });
+                }
+
+                let mut code_cursor = Cursor::new(&code_slice[code_start..code_start + attribute_length as usize]);
+                check_bounds(&code_cursor, 8, file_path_str, "Code attribute header")?;
+                let _max_stack = code_cursor.read_u16::<BigEndian>()?;
+                let _max_locals = code_cursor.read_u16::<BigEndian>()?;
+                let code_length = code_cursor.read_u32::<BigEndian>()? as usize;
+                check_bounds(&code_cursor, code_length as u64, file_path_str, "bytecode body")?;
+                let bytecode_start = code_cursor.position() as usize;
+                let bytecode_end = bytecode_start + code_length;
+                let bytecode = &code_cursor.get_ref()[bytecode_start..bytecode_end];
+
+                let calls = parse_method_invocations(bytecode, pool, file_path_str)?;
+                method_calls.extend(calls);
+
+                code_cursor.seek(SeekFrom::Current(code_length as i64))?;
+                check_bounds(&code_cursor, 8, file_path_str, "Code exception table header")?;
+                let exception_table_length = code_cursor.read_u16::<BigEndian>()?;
+                code_cursor.seek(SeekFrom::Current((exception_table_length as i64) * 8))?;
+                check_bounds(&code_cursor, 2, file_path_str, "Code nested attributes count")?;
+                let nested_attributes_count = code_cursor.read_u16::<BigEndian>()?;
+                skip_attributes(&mut code_cursor, nested_attributes_count, file_path_str)?;
+
+                cursor.seek(SeekFrom::Current(attribute_length as i64))?;
+            } else {
+                check_bounds(cursor, attribute_length, file_path_str, "method attribute body")?;
+                cursor.seek(SeekFrom::Current(attribute_length as i64))?;
+            }
+        }
+
+        members.push(MethodInfo {
+            name,
+            descriptor,
+            access_flags,
+        });
+    }
+
+    Ok((members, method_calls))
 }
 
 fn parse_constant_pool(
@@ -444,18 +783,12 @@ pub fn parse_class_structure(
 
     check_bounds(&cursor, 2, original_path_str, "methods_count")?;
     let methods_count = cursor.read_u16::<BigEndian>()?;
-    let methods = parse_members(
+    let (methods, method_calls) = parse_methods(
         &mut cursor,
         methods_count,
         original_path_str,
         verbose,
-        "method",
         &constant_pool,
-        |name, descriptor, access_flags| MethodInfo {
-            name,
-            descriptor,
-            access_flags,
-        },
     )?;
 
     let mut string_set: HashSet<String> = constant_pool
@@ -489,6 +822,7 @@ pub fn parse_class_structure(
         superclass_name,
         interfaces,
         methods,
+        method_calls,
         fields,
         strings,
         access_flags,

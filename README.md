@@ -1,106 +1,39 @@
 # CollapseScanner
 
-CollapseScanner is a fast, local-first static analysis tool for Java JARs, class files, and archive contents. It is designed for security researchers, malware analysts, and developers who need to triage suspicious Java artifacts quickly without running them.
+CollapseScanner is a local static scanner for Java artifacts. Point it at a `.jar`, a `.class` file, or a directory, and it will look for the parts you probably want to inspect first.
 
-The scanner focuses on high-signal indicators in Java bytecode, class metadata, strings, and archive structure. It is not a decompiler and not a sandbox. Instead, it is a triage tool that helps you find the parts of a sample worth deeper investigation.
+It does not run the sample. It does not decompile everything into source. It reads class structure, bytecode references, strings, and archive contents, then gives you a short risk-focused report.
 
-## What it can detect
+## What it looks for
 
-CollapseScanner groups detections into a few practical categories:
+CollapseScanner checks for:
 
-### Network and exfiltration indicators
+- hardcoded IPv4 and IPv6 addresses
+- URLs, suspicious domains, and Discord webhooks
+- token-like secrets and hardcoded credentials
+- process execution, reflection, dynamic loading, attach APIs, instrumentation, JNA, and `Unsafe`
+- high-entropy Base64 or hex blobs
+- Unicode name obfuscation
+- malformed or tampered class files
+- embedded scripts, binaries, native libraries, and suspicious archive entries
+- nested archives inside JARs
 
-- IPv4 addresses
-- IPv6 addresses
-- URLs
-- suspicious URLs and domains
-- Discord webhooks
+The goal is triage. If a file is noisy, packed, or reaching out to strange infrastructure, CollapseScanner should make that obvious quickly.
 
-These detections are useful for spotting hardcoded infrastructure, command-and-control endpoints, and common exfiltration channels.
+## Install
 
-### Suspicious Java API usage
-
-CollapseScanner detects Java APIs that are frequently associated with malware, loaders, or advanced evasion logic, including:
-
-- process execution via `Runtime.exec` and `ProcessBuilder`
-- reflection usage such as `Class.getDeclaredMethod` and related APIs
-- dynamic class loading and class definition
-- script engine execution
-- Java agent and instrumentation APIs
-- JVM attach APIs
-- native bridge / low-level APIs such as JNA and `Unsafe`
-
-The scanner also extracts nearby literal arguments from bytecode where possible, which makes findings more actionable. For example, it can surface likely command strings or reflected member names instead of only reporting that an API was used.
-
-### Obfuscation and packing indicators
-
-- high-entropy Base64-like payloads
-- high-entropy hex payloads
-- Unicode-based obfuscation in class, method, or field names
-- tampered or malformed class files
-
-These checks are intended to highlight samples that are intentionally hiding behavior or attempting to break normal tooling.
-
-### Archive and native content indicators
-
-- suspicious archive entries
-- native libraries
-- package contents that do not look consistent with a normal Java distribution
-
-These findings help identify mixed-language payloads, embedded native components, and archive-level anomalies.
-
-## How it works
-
-CollapseScanner parses Java class structure directly from the class file format and combines several analysis layers:
-
-- constant-pool inspection for strings, classes, methods, and references
-- bytecode inspection for method invocation context
-- string heuristics for URLs, IPs, commands, and suspicious keywords
-- archive and resource inspection for packaging anomalies
-- scoring and normalization to rank the most relevant findings
-
-This approach gives the scanner more context than raw string matching alone, while remaining fast enough for archive-scale triage.
-
-## How it compares
-
-### Compared with decompilers such as JADX, CFR, or FernFlower
-
-CollapseScanner is not trying to reconstruct source code. Decompilers are better when you need readable Java or Kotlin output and are willing to inspect code manually. CollapseScanner is better for first-pass triage because it is faster, local, and focused on detection rather than source recovery.
-
-### Compared with generic string scanners or YARA-style rules
-
-String scanners are good at finding literal indicators, but they usually miss context. CollapseScanner understands Java class structure and bytecode enough to attach context to some API calls, which makes it better at identifying why a string matters and where it is used.
-
-### Compared with sandboxing or dynamic analysis
-
-Sandboxes can observe runtime behavior, network traffic, and process creation. CollapseScanner cannot do that. What it offers instead is speed, safety, and offline analysis. It is best used before dynamic analysis, or when you only have static artifacts and want to prioritize the suspicious ones.
-
-### Practical summary
-
-- Use a decompiler when you want to understand control flow and source-like code.
-- Use CollapseScanner when you want to triage a lot of Java artifacts quickly and extract suspicious indicators.
-- Use a sandbox when you need behavioral confirmation.
-
-## Features
-
-- fast parallel scanning of JARs and class files
-- detailed suspicious API detection
-- string, URL, IP, and domain analysis
-- archive and resource inspection
-- interactive CLI explorer after scanning
-- JSON export for reporting or downstream tooling
-- risk scoring and severity summaries
-
-## Installation
-
-### From source
-
-Requires [Rust](https://rustup.rs/).
+You need Rust.
 
 ```bash
 git clone https://github.com/CollapseLoader/CollapseScanner.git
 cd CollapseScanner
-cargo run --release
+cargo build --release
+```
+
+The binary will be at:
+
+```bash
+target/release/collapsescanner
 ```
 
 ## Usage
@@ -109,61 +42,65 @@ cargo run --release
 # Scan a JAR, class file, or directory
 collapsescanner <path>
 
-# Run with all detection enabled
-collapsescanner <path> --mode all
+# Scan only network indicators
+collapsescanner <path> --mode network
 
-# Run and then enter the interactive explorer
-collapsescanner <path>
+# Scan only malicious APIs, keywords, and secrets
+collapsescanner <path> --mode malicious
+
+# Scan only obfuscation signals
+collapsescanner <path> --mode obfuscation
+
+# Write JSON for another tool
+collapsescanner <path> --json --output report.json
+
+# Scan only matching entries
+collapsescanner mods/ --find "*.class" --exclude "META-INF/*"
+
+# Use a fixed worker count
+collapsescanner sample.jar --threads 8
 ```
 
-### Interactive commands
+## Output
 
-Once CollapseScanner finishes a scan, it can open an interactive CLI for reviewing results.
+The normal terminal report starts with a summary, then shows:
 
-| Command              | Description                                  |
-| -------------------- | -------------------------------------------- |
-| `detailed`           | Show full reports for suspicious files       |
-| `summary`            | Show scan statistics and the severity matrix |
-| `files`              | List files with suspicious findings          |
-| `inspect <idx>`      | Inspect a specific result in detail          |
-| `sort <risk\|path>`  | Sort results by risk level or file path      |
-| `export <file.json>` | Export findings to JSON                      |
-| `clear`              | Clear the terminal                           |
-| `exit`               | Leave interactive mode                       |
+- risk score
+- total findings and affected files
+- finding breakdown
+- severity distribution
+- top files to inspect first
+- detailed per-file findings
 
-## Reporting
-
-A scan result typically includes:
-
-- the file path
-- structured findings with symbols and severity
-- class metadata when the target is a Java class
-- a danger score and short explanation
-- optional JSON output for external analysis pipelines
-
-Example output:
+Example:
 
 ```text
-[#] Total Findings: 13 | Files with Findings: 10 | Risk Level: MODERATE RISK (5/10)
+Risk: MODERATE RISK (6/10)
+Findings: 18 across 7 file(s)
+Scanned: 240 file(s) in 1.42s (169.0 files/sec)
 
-[?] Findings Breakdown:
-  Suspicious Java API [MEDIUM] (3)
-      [1] Process execution API usage: Likely running "cmd.exe /c ..."
-  Encoded Payload [LOW] (4)
-      [1] High-entropy Base64-like blob (480 chars)
+Finding breakdown
+  [SECRET] Credential or Token [CRITICAL] (1)
+      [1] Potential embedded credential: token=ab...A91f (44 chars)
 
-[*] Severity Distribution
-    [0] Critical   [1] High   [7] Medium   [2] Low
+Start here
+    [1] com/example/Loader.class (8/10, 4 findings)
 ```
 
-## Limitations
+Use `--json` when you want stable machine-readable output. Use `--output` with or without `--json` to save the same JSON report to disk.
 
-CollapseScanner is intentionally static. It does not execute code, follow live network activity, or fully emulate the JVM. Its job is to identify likely-risky content quickly and give you enough context to decide what to inspect next.
+## Modes
 
-Because of that, the scanner is strongest when used as an initial triage layer before manual review or dynamic analysis.
+`all` runs every detector and is the default.
 
-## Security and privacy
+`network` focuses on URLs, IPs, suspicious infrastructure, and webhooks.
 
-- static analysis only
-- no code execution
-- local-first processing
+`malicious` focuses on risky APIs, suspicious keywords, encoded payloads, and token-like secrets.
+
+`obfuscation` focuses on class/name weirdness and tampered class indicators.
+
+## Notes
+
+CollapseScanner is static analysis. It will not see behavior that only appears at runtime, and it will not prove that a file is malicious. Treat the score as a triage hint, not a verdict.
+
+It is usually a good first pass before opening a decompiler or running a sample in a sandbox.

@@ -20,7 +20,23 @@ lazy_static::lazy_static! {
     pub static ref SUSSY_DOMAINS: HashSet<String> = [
         "discord.com",
         "discordapp.com",
+        "discord.gg",
+        "cdn.discordapp.com",
         "pastebin.com",
+        "hastebin.com",
+        "ghostbin.co",
+        "gofile.io",
+        "transfer.sh",
+        "webhook.site",
+        "requestbin.net",
+        "ngrok.io",
+        "ngrok-free.app",
+        "localtunnel.me",
+        "serveo.net",
+        "grabify.link",
+        "iplogger.org",
+        "ipify.org",
+        "ifconfig.me",
         "bit.ly",
         "tinyurl.com",
     ]
@@ -29,14 +45,12 @@ lazy_static::lazy_static! {
     .collect();
 }
 
-/// Helper to get a fast hash for bloom filter operations.
 fn get_bloom_hash(s: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     s.hash(&mut hasher);
     hasher.finish()
 }
 
-/// Returns `true` if `s` has previously been determined to be a safe (non-suspicious) string.
 pub fn is_cached_safe_string(s: &str) -> bool {
     if SAFE_STRING_CACHE.get(s).is_some() {
         return true;
@@ -51,7 +65,6 @@ pub fn is_cached_safe_string(s: &str) -> bool {
     SAFE_STRING_CACHE.get(s).is_some()
 }
 
-/// Marks `s` as a safe string so future scans can skip it quickly.
 pub fn cache_safe_string(s: &str) {
     let h = get_bloom_hash(s);
 
@@ -64,7 +77,6 @@ pub fn cache_safe_string(s: &str) {
     SAFE_STRING_CACHE.insert(s.to_string(), ());
 }
 
-/// Produces a fast, representative hash of `data` for use as a cache key.
 pub fn calculate_detection_hash(data: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
 

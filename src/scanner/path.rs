@@ -3,6 +3,9 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
+use rayon::prelude::*;
+use walkdir::WalkDir;
+
 use crate::config::SYSTEM_CONFIG;
 use crate::errors::ScanError;
 use crate::scanner::scan::CollapseScanner;
@@ -57,6 +60,10 @@ impl CollapseScanner {
     }
 
     pub fn scan_path(&self, path: &Path) -> Result<Vec<ScanResult>, ScanError> {
+        if path.is_dir() {
+            return self.scan_directory(path);
+        }
+
         if let Ok(metadata) = fs::metadata(path) {
             let file_size_mb = metadata.len() / (1024 * 1024);
             if file_size_mb > SYSTEM_CONFIG.max_file_size as u64 {
@@ -94,5 +101,58 @@ impl CollapseScanner {
                 path.extension().map(|s| s.to_os_string()),
             ))
         }
+    }
+
+    fn scan_directory(&self, directory: &Path) -> Result<Vec<ScanResult>, ScanError> {
+        let mut targets = Vec::new();
+
+        for entry in WalkDir::new(directory).follow_links(false).into_iter() {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    if self.options.verbose {
+                        eprintln!("(!) Skipping unreadable directory entry: {}", error);
+                    }
+                    continue;
+                }
+            };
+
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            let path = entry.path();
+            if !has_extension(path, &["jar", "class"]) {
+                continue;
+            }
+
+            let display_path = path.to_string_lossy();
+            if self.should_scan(&display_path) {
+                targets.push(path.to_path_buf());
+            }
+        }
+
+        if self.options.verbose {
+            println!(
+                "[*] Found {} scannable file(s) under {}",
+                targets.len(),
+                directory.display()
+            );
+        }
+
+        let nested_results: Vec<Vec<ScanResult>> = targets
+            .par_iter()
+            .filter_map(|target| match self.scan_path(target) {
+                Ok(results) => Some(results),
+                Err(error) => {
+                    if self.options.verbose {
+                        eprintln!("(!) Error scanning {}: {}", target.display(), error);
+                    }
+                    None
+                }
+            })
+            .collect();
+
+        Ok(nested_results.into_iter().flatten().collect())
     }
 }

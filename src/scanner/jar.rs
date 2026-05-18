@@ -40,12 +40,12 @@ impl CollapseScanner {
 
         let max_entry_size = SYSTEM_CONFIG.max_file_size * 1024 * 1024;
 
-        let pb_template = format!("[*] [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} ({{percent}}%) Processing: {{msg}}");
+        let pb_template = "[*] [{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} ({percent}%) Processing: {msg}";
         let progress_bar = Arc::new(Mutex::new(ProgressBar::new(total_files as u64)));
         progress_bar.lock().unwrap().set_style(
             ProgressStyle::default_bar()
-                .template(&pb_template)?
-                .progress_chars("█▉▊▋▌▍▎▏  "),
+                .template(pb_template)?
+                .progress_chars("=>-"),
         );
 
         let processed_count = Arc::new(AtomicUsize::new(0));

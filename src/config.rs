@@ -39,14 +39,13 @@ impl SystemConfig {
             .map(|mb| mb * 1024 * 1024)
             .unwrap_or(total_memory);
 
-        let result_cache_size = parse_env_usize("COLLAPSE_RESULT_CACHE_SIZE").unwrap_or_else(
-            || match available_memory {
+        let result_cache_size =
+            parse_env_usize("COLLAPSE_RESULT_CACHE_SIZE").unwrap_or(match available_memory {
                 m if m < LOW_MEMORY_THRESHOLD => DEFAULT_RESULT_CACHE_SIZE,
                 m if m < MEDIUM_MEMORY_THRESHOLD => 16_384,
                 m if m < HIGH_MEMORY_THRESHOLD => 65_536,
                 _ => 131_072,
-            },
-        );
+            });
 
         let buffer_size = parse_env_usize("COLLAPSE_BUFFER_SIZE_MB")
             .map(|mb| mb * 1024 * 1024)
@@ -58,7 +57,7 @@ impl SystemConfig {
             });
 
         let safe_string_cache_capacity = parse_env_usize("COLLAPSE_STRING_CACHE_CAPACITY")
-            .unwrap_or_else(|| match available_memory {
+            .unwrap_or(match available_memory {
                 m if m < LOW_MEMORY_THRESHOLD => DEFAULT_SAFE_STRING_CACHE_CAPACITY,
                 m if m < MEDIUM_MEMORY_THRESHOLD => 20_000,
                 m if m < HIGH_MEMORY_THRESHOLD => 80_000,

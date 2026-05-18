@@ -171,7 +171,10 @@ fn resolve_name_and_type(
         )),
         other => Err(ScanError::ClassParseError {
             path: path.to_string(),
-            msg: format!("Expected NameAndType at CP index {}, found {:?}", index, other),
+            msg: format!(
+                "Expected NameAndType at CP index {}, found {:?}",
+                index, other
+            ),
         }),
     }
 }
@@ -197,7 +200,10 @@ fn resolve_method_ref(
         }
         other => Err(ScanError::ClassParseError {
             path: path.to_string(),
-            msg: format!("Expected Methodref at CP index {}, found {:?}", index, other),
+            msg: format!(
+                "Expected Methodref at CP index {}, found {:?}",
+                index, other
+            ),
         }),
     }
 }
@@ -215,7 +221,9 @@ fn resolve_ldc_string(
     }
 
     match &pool[index as usize - 1] {
-        ConstantPoolEntry::String(utf8_index) => Ok(Some(resolve_utf8(pool, *utf8_index, path)?.to_string())),
+        ConstantPoolEntry::String(utf8_index) => {
+            Ok(Some(resolve_utf8(pool, *utf8_index, path)?.to_string()))
+        }
         _ => Ok(None),
     }
 }
@@ -289,10 +297,7 @@ fn bytecode_instruction_length(code: &[u8], pc: usize) -> Result<usize, ScanErro
         0xC6 | 0xC7 => 3,
         0xC8 | 0xC9 => 5,
         0xCA => 1,
-        0x00..=0x0F
-        | 0x1A..=0x35
-        | 0x3B..=0x83
-        | 0x85..=0x98 => 1,
+        0x00..=0x0F | 0x1A..=0x35 | 0x3B..=0x83 | 0x85..=0x98 => 1,
         other => {
             return Err(ScanError::ClassParseError {
                 path: "<bytecode>".to_string(),
@@ -371,7 +376,8 @@ fn parse_method_invocations(
                     u16::from_be_bytes([code[pc + 1], code[pc + 2]])
                 };
 
-                if let Ok((owner, name, descriptor)) = resolve_method_ref(pool, index, file_path_str)
+                if let Ok((owner, name, descriptor)) =
+                    resolve_method_ref(pool, index, file_path_str)
                 {
                     invocations.push(MethodCallInfo {
                         owner,
@@ -381,14 +387,16 @@ fn parse_method_invocations(
                     });
                 }
             }
-            0xBA => {
-                if pc + 4 >= code.len() {
-                    return Err(ScanError::ClassParseError {
-                        path: file_path_str.to_string(),
-                        msg: format!("Unexpected EOF while reading invokedynamic at offset {}", pc),
-                    });
-                }
+            0xBA if pc + 4 >= code.len() => {
+                return Err(ScanError::ClassParseError {
+                    path: file_path_str.to_string(),
+                    msg: format!(
+                        "Unexpected EOF while reading invokedynamic at offset {}",
+                        pc
+                    ),
+                });
             }
+            0xBA => {}
             _ => {}
         }
 
@@ -410,7 +418,12 @@ fn parse_methods(
     let mut method_calls = Vec::new();
 
     for index in 0..count {
-        check_bounds(cursor, 8, file_path_str, &format!("method header {}", index))?;
+        check_bounds(
+            cursor,
+            8,
+            file_path_str,
+            &format!("method header {}", index),
+        )?;
         let access_flags = cursor.read_u16::<BigEndian>()?;
         let name_index = cursor.read_u16::<BigEndian>()?;
         let descriptor_index = cursor.read_u16::<BigEndian>()?;
@@ -443,7 +456,12 @@ fn parse_methods(
                 .unwrap_or_default();
 
             if attribute_name == "Code" {
-                check_bounds(cursor, attribute_length, file_path_str, "Code attribute body")?;
+                check_bounds(
+                    cursor,
+                    attribute_length,
+                    file_path_str,
+                    "Code attribute body",
+                )?;
                 let code_start = cursor.position() as usize;
                 let code_slice = cursor.get_ref();
                 if code_start + attribute_length as usize > code_slice.len() {
@@ -453,12 +471,18 @@ fn parse_methods(
                     });
                 }
 
-                let mut code_cursor = Cursor::new(&code_slice[code_start..code_start + attribute_length as usize]);
+                let mut code_cursor =
+                    Cursor::new(&code_slice[code_start..code_start + attribute_length as usize]);
                 check_bounds(&code_cursor, 8, file_path_str, "Code attribute header")?;
                 let _max_stack = code_cursor.read_u16::<BigEndian>()?;
                 let _max_locals = code_cursor.read_u16::<BigEndian>()?;
                 let code_length = code_cursor.read_u32::<BigEndian>()? as usize;
-                check_bounds(&code_cursor, code_length as u64, file_path_str, "bytecode body")?;
+                check_bounds(
+                    &code_cursor,
+                    code_length as u64,
+                    file_path_str,
+                    "bytecode body",
+                )?;
                 let bytecode_start = code_cursor.position() as usize;
                 let bytecode_end = bytecode_start + code_length;
                 let bytecode = &code_cursor.get_ref()[bytecode_start..bytecode_end];
@@ -467,16 +491,31 @@ fn parse_methods(
                 method_calls.extend(calls);
 
                 code_cursor.seek(SeekFrom::Current(code_length as i64))?;
-                check_bounds(&code_cursor, 8, file_path_str, "Code exception table header")?;
+                check_bounds(
+                    &code_cursor,
+                    8,
+                    file_path_str,
+                    "Code exception table header",
+                )?;
                 let exception_table_length = code_cursor.read_u16::<BigEndian>()?;
                 code_cursor.seek(SeekFrom::Current((exception_table_length as i64) * 8))?;
-                check_bounds(&code_cursor, 2, file_path_str, "Code nested attributes count")?;
+                check_bounds(
+                    &code_cursor,
+                    2,
+                    file_path_str,
+                    "Code nested attributes count",
+                )?;
                 let nested_attributes_count = code_cursor.read_u16::<BigEndian>()?;
                 skip_attributes(&mut code_cursor, nested_attributes_count, file_path_str)?;
 
                 cursor.seek(SeekFrom::Current(attribute_length as i64))?;
             } else {
-                check_bounds(cursor, attribute_length, file_path_str, "method attribute body")?;
+                check_bounds(
+                    cursor,
+                    attribute_length,
+                    file_path_str,
+                    "method attribute body",
+                )?;
                 cursor.seek(SeekFrom::Current(attribute_length as i64))?;
             }
         }

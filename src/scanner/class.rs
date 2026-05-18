@@ -6,7 +6,7 @@ use crate::detection::{cache_safe_string, calculate_detection_hash, is_cached_sa
 use crate::errors::ScanError;
 use crate::filters::{
     is_known_good_ip, is_public_routable_ip, IPV6_REGEX, IP_REGEX, MALICIOUS_PATTERN_REGEX,
-    URL_REGEX,
+    SECRET_REGEX, URL_REGEX,
 };
 use crate::parser::parse_class_structure;
 use crate::scanner::api_analyzer::ApiAnalyzer;
@@ -117,10 +117,9 @@ impl CollapseScanner {
                 && !self.is_good_link(&domain)
                 && !self.is_suspicious_domain(&domain)
                 && !self.is_local_host(&domain)
+                && !is_known_good_ip(&domain)
             {
-                if !is_known_good_ip(&domain) {
-                    findings.push((FindingType::Url, url_match.to_string()));
-                }
+                findings.push((FindingType::Url, url_match.to_string()));
             }
         }
     }
@@ -189,6 +188,31 @@ impl CollapseScanner {
                 ));
             }
         }
+    }
+
+    fn check_secret_patterns(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
+        for m in SECRET_REGEX.find_iter(string) {
+            let secret = m.as_str();
+            findings.push((
+                FindingType::CredentialSecret,
+                format!(
+                    "Potential embedded credential: {}",
+                    self.redact_secret(secret)
+                ),
+            ));
+        }
+    }
+
+    fn redact_secret(&self, secret: &str) -> String {
+        let visible_prefix: String = secret.chars().take(8).collect();
+        let visible_suffix_chars: Vec<char> = secret.chars().rev().take(4).collect();
+        let visible_suffix: String = visible_suffix_chars.into_iter().rev().collect();
+        format!(
+            "{}...{} ({} chars)",
+            visible_prefix,
+            visible_suffix,
+            secret.chars().count()
+        )
     }
 
     fn check_encoded_payloads(&self, string: &str, findings: &mut Vec<(FindingType, String)>) {
@@ -291,6 +315,10 @@ impl CollapseScanner {
             self.check_malicious_patterns(string, findings);
         }
 
+        if SECRET_REGEX.is_match(string) {
+            self.check_secret_patterns(string, findings);
+        }
+
         self.check_encoded_payloads(string, findings);
 
         findings.len() == initial_len
@@ -303,9 +331,7 @@ impl CollapseScanner {
     ) -> bool {
         let initial_len = findings.len();
         self.check_network_patterns(string, findings);
-        if findings.len() == initial_len {
-            self.check_suspicious_url_patterns(string, findings);
-        }
+        self.check_suspicious_url_patterns(string, findings);
         findings.len() == initial_len
     }
 
@@ -316,6 +342,7 @@ impl CollapseScanner {
     ) -> bool {
         let initial_len = findings.len();
         self.check_malicious_patterns(string, findings);
+        self.check_secret_patterns(string, findings);
         self.check_encoded_payloads(string, findings);
         findings.len() == initial_len
     }
@@ -449,7 +476,8 @@ impl CollapseScanner {
             || type_counts.contains_key(&FindingType::SuspiciousUrl);
 
         let has_suspicious_logic = type_counts.contains_key(&FindingType::SuspiciousKeyword)
-            || type_counts.contains_key(&FindingType::SuspiciousApi);
+            || type_counts.contains_key(&FindingType::SuspiciousApi)
+            || type_counts.contains_key(&FindingType::CredentialSecret);
 
         let has_obfuscation = type_counts.contains_key(&FindingType::EncodedPayload)
             || type_counts.contains_key(&FindingType::TamperedClass)
@@ -594,6 +622,15 @@ impl CollapseScanner {
             }
         }
 
+        if let Some(secrets) = by_type.get(&FindingType::CredentialSecret) {
+            if !secrets.is_empty() {
+                explanations.push(format!(
+                    "Contains {} embedded credential/token-like value(s). Hardcoded secrets are high confidence indicators for account theft or bot control.",
+                    secrets.len()
+                ));
+            }
+        }
+
         if let Some(encoded_payloads) = by_type.get(&FindingType::EncodedPayload) {
             if !encoded_payloads.is_empty() {
                 explanations.push(format!(
@@ -726,7 +763,10 @@ impl CollapseScanner {
             self.check_name_obfuscation(class_details, findings);
         }
 
-        ApiAnalyzer::analyze(class_details, findings);
+        if self.options.mode == DetectionMode::Malicious || self.options.mode == DetectionMode::All
+        {
+            ApiAnalyzer::analyze(class_details, findings);
+        }
     }
 
     fn prepare_strings_for_scanning<'a>(&self, class_details: &'a ClassDetails) -> Vec<&'a String> {

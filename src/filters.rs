@@ -16,7 +16,16 @@ lazy_static::lazy_static! {
 \s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»""']))"#).unwrap();
 
     /// Generic malicious / suspicious pattern keywords
-    pub static ref MALICIOUS_PATTERN_REGEX: Regex = Regex::new(r"(?i)\b(powershell|cmd\.exe|Runtime\.getRuntime\(\)\.exec)\b").unwrap();
+    pub static ref MALICIOUS_PATTERN_REGEX: Regex = Regex::new(r"(?i)\b(powershell|cmd(?:\.exe)?|/bin/(?:ba)?sh|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|loadLibrary|System\.load|defineClass|setAccessible|VirtualMachine\.attach|keylogger|clipboard|appdata|\.minecraft|token|password|webhook)\b").unwrap();
+
+    /// High-confidence credential/token literals frequently found in malware configs.
+    pub static ref SECRET_REGEX: Regex = Regex::new(r#"(?x)
+        (?i)\b(?:mfa\.[A-Za-z0-9_-]{20,}|[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,})\b
+        |
+        \beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b
+        |
+        (?i)\b(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*['"]?[A-Za-z0-9_./+=:-]{16,}
+    "#).unwrap();
 
     /// Known "good" links / domains
     pub static ref GOOD_LINKS: HashSet<String> = [
@@ -156,5 +165,24 @@ pub fn is_public_routable_ip(ip: &str) -> bool {
                 || is_documentation
                 || v6.is_multicast())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_token_like_secrets() {
+        assert!(SECRET_REGEX.is_match("token=abc1234567890ABCDEF_abcdef1234567890"));
+        assert!(SECRET_REGEX
+            .is_match("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payloadpayload.signaturesig"));
+    }
+
+    #[test]
+    fn excludes_reserved_ip_ranges() {
+        assert!(!is_public_routable_ip("192.168.1.10"));
+        assert!(!is_public_routable_ip("203.0.113.12"));
+        assert!(is_public_routable_ip("93.184.216.34"));
     }
 }
